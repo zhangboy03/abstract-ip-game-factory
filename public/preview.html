@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abstract IP Game Factory - Preview</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center h-screen p-4">
+    <h1 class="text-3xl font-bold mb-8 text-center">Game Preview</h1>
+    
+    <div class="w-full max-w-4xl h-3/4 bg-white shadow-lg rounded-lg mb-6">
+        <iframe id="gameFrame" class="w-full h-full border-0 rounded-lg" srcdoc="<p class='p-4 text-center text-gray-500'>Loading game preview...</p>"></iframe>
+    </div>
+
+    <div class="flex space-x-4">
+        <button id="downloadHtmlButton" class="bg-green-500 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg text-lg focus:outline-none focus:shadow-outline">
+            Download HTML
+        </button>
+        <button id="copyLinkButton" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg text-lg focus:outline-none focus:shadow-outline">
+            Copy Link
+        </button>
+    </div>
+
+    <script src="js/preview.js"></script>
+</body>
+</html> 
