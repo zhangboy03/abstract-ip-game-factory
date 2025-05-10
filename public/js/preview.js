@@ -9,17 +9,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (gameHTML) {
         gameFrame.srcdoc = gameHTML;
     } else {
-        gameFrame.srcdoc = "<p class='p-4 text-center text-gray-500'>No game content found. Please generate a game first.</p>";
+        gameFrame.srcdoc = "<p class='p-4 text-center text-gray-500'>No game content found. Please generate a game first. Go back to chat and request game generation.</p>";
         downloadHtmlButton.disabled = true;
         copyLinkButton.disabled = true;
     }
 
     downloadHtmlButton.addEventListener('click', () => {
-        if (!gameHTML) return;
+        if (!gameHTML) {
+            alert('No game content to download.');
+            return;
+        }
         const blob = new Blob([gameHTML], { type: 'text/html' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = 'game.html';
+        link.download = 'index.html';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -27,35 +30,28 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     copyLinkButton.addEventListener('click', () => {
-        // This button is a placeholder for when Supabase integration is added.
-        // For now, it will indicate that the game needs to be uploaded first.
         if (!gameHTML) {
             alert('No game content to share.');
             return;
         }
-
-        // Placeholder: Simulate Supabase upload and link generation
-        alert('To get a shareable link, the game would first be uploaded to a backend (e.g., Supabase). This functionality is not yet implemented in the scaffold.');
-        
-        // If Supabase is integrated, you would:
-        // 1. Upload gameHTML to Supabase.
-        // 2. Get a unique ID or slug for the game.
-        // 3. Construct a shareable URL (e.g., yourdomain.com/preview.html?gameId=UNIQUE_ID).
-        // 4. Copy this URL to the clipboard.
+        // Placeholder for actual Supabase upload and link generation
+        alert('To get a shareable link, the game would first be uploaded (e.g., to Supabase). This functionality is a placeholder.');
+        // Example of future clipboard functionality:
+        // const shareableLink = '...link from Supabase...';
         // navigator.clipboard.writeText(shareableLink).then(() => {
-        //     alert('Link copied to clipboard!');
+        //     alert('Link copied to clipboard! (Placeholder)');
         // }).catch(err => {
-        //     alert('Failed to copy link.');
+        //     alert('Failed to copy link. (Placeholder)');
         // });
     });
 
-    // Optional: Logic to load game from URL parameter if Supabase is used
+    // Optional: Logic to load game from URL parameter if Supabase is used for sharing
     // const urlParams = new URLSearchParams(window.location.search);
     // const gameId = urlParams.get('gameId');
-    // if (gameId) {
-    //    // Fetch gameHTML from Supabase using gameId and update gameFrame.srcdoc
-    //    // supabase.from('games').select('game_code').eq('id', gameId).single().then(({data, error}) => { ... });
-    //    console.log("Attempting to load game with ID:", gameId); 
-    //    gameFrame.srcdoc = `<p class='p-4 text-center text-gray-500'>Loading game ${gameId} from server...</p>`;
+    // if (gameId && !gameHTML) { // Only if not already loaded from sessionStorage
+    //    console.log("Attempting to load game with ID from URL parameter:", gameId); 
+    //    gameFrame.srcdoc = `<p class='p-4 text-center text-gray-500'>Loading game ${gameId} from server (feature not implemented)...</p>`;
+    //    // Actual fetch from Supabase would go here:
+    //    // fetchGameFromSupabase(gameId).then(html => { gameFrame.srcdoc = html; sessionStorage.setItem('generatedGameHTML', html); downloadHtmlButton.disabled = false; copyLinkButton.disabled = false; }).catch(err => ...);
     // }
 }); 
