@@ -144,53 +144,50 @@ http.createServer(async (req, res) => {
 */
 // Actual implementation starts here
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const CLAUDE_MODEL = "anthropic/claude-3.7-sonnet"; // Updated model ID
+const CLAUDE_MODEL = "anthropic/claude-3.7-sonnet"; // User confirmed this model name was working locally
 
 module.exports = async (req, res) => {
+    console.log('[CHAT_API_LOG] Function invoked. Method:', req.method, 'URL:', req.url);
+
     // Set CORS headers for all responses
-    // This will be updated later to the specific Vercel frontend URL
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
+        console.log('[CHAT_API_LOG] Handling OPTIONS request.');
         res.status(204).end();
         return;
     }
 
-    // Vercel automatically parses the body for common content types like application/json
-    // For other types or manual parsing, you'd read from `req` stream.
-    // The existing code reads the body manually, which is fine.
-    // req.url is still the path, e.g., '/api/chat' (though for Vercel, file name implies path)
-
-    if (req.method === 'POST') { // Vercel routes POST requests to the function
+    if (req.method === 'POST') {
+        console.log('[CHAT_API_LOG] Handling POST request.');
         if (!OPENROUTER_API_KEY) {
-            console.error('OPENROUTER_API_KEY is not set.');
+            console.error('[CHAT_API_ERROR] OPENROUTER_API_KEY is not set.');
             res.status(500).json({ error: 'Server configuration error: Missing API key.' });
             return;
         }
-
-        // The original code uses req.on('data') and req.on('end') to build up the requestBody.
-        // This is okay, but for Vercel, if the client sends 'Content-Type: application/json',
-        // `req.body` would typically be pre-parsed.
-        // However, since the original code is robust, let's adapt it minimally first.
-        // If `req.body` is available from Vercel, we can simplify later.
+        console.log('[CHAT_API_LOG] OPENROUTER_API_KEY is present.');
 
         let requestBody = '';
-        // Vercel's `req` object is a stream.Readable, so .on('data') and .on('end') work.
         req.on('data', chunk => {
+            console.log('[CHAT_API_LOG] Receiving request body chunk.');
             requestBody += chunk.toString();
         });
 
         req.on('end', async () => {
+            console.log('[CHAT_API_LOG] Request body fully received. Body:', requestBody.substring(0, 200) + (requestBody.length > 200 ? '...' : ''));
             try {
                 const { conversation, imgURL, audioURL } = JSON.parse(requestBody);
+                console.log('[CHAT_API_LOG] Request body parsed. Conversation length:', conversation ? conversation.length : 'N/A', 'imgURL present:', !!imgURL, 'audioURL present:', !!audioURL);
 
                 if (!conversation || !Array.isArray(conversation)) {
                     if (!imgURL && !audioURL) {
+                        console.error('[CHAT_API_ERROR] Invalid request: conversation array is required or imgURL/audioURL for initial prompt.');
                         res.status(400).json({ error: 'Invalid request: conversation array is required or imgURL/audioURL for initial prompt.' });
                         return;
                     }
+                    console.log('[CHAT_API_LOG] Initial prompt (no prior conversation).');
                 }
 
                 const systemPrompt = `你是一位富有创造力且技术精湛的HTML5游戏开发专家和游戏设计师。你的核心任务是与用户交流，帮助他们将一个【用户提供的抽象IP】（必须使用用户通过imgURL提供的图片，以及可选的audioURL提供的音频）融入一款经典游戏的魔改版。
@@ -274,12 +271,14 @@ module.exports = async (req, res) => {
                     initialUserContent.push({ type: "text", text: initialText });
                     messagesForAPI.push({ role: 'user', content: initialUserContent });
                 }
+                console.log('[CHAT_API_LOG] Prepared messages for OpenRouter API. Total messages:', messagesForAPI.length);
 
                 const openRouterPayload = JSON.stringify({
                     model: CLAUDE_MODEL,
                     messages: messagesForAPI,
                     stream: true
                 });
+                console.log('[CHAT_API_LOG] OpenRouter payload created (first 200 chars):', openRouterPayload.substring(0,200) + (openRouterPayload.length > 200 ? '...' : ''));
 
                 const options = {
                     hostname: 'openrouter.ai',
@@ -292,54 +291,64 @@ module.exports = async (req, res) => {
                     }
                 };
                 
-                // Set headers for SSE response
+                console.log('[CHAT_API_LOG] Setting SSE headers for client response.');
                 res.setHeader('Content-Type', 'text/event-stream');
                 res.setHeader('Cache-Control', 'no-cache');
                 res.setHeader('Connection', 'keep-alive');
-                // Access-Control-Allow-Origin is already set globally at the start of the function
 
+                console.log('[CHAT_API_LOG] Making request to OpenRouter...');
                 const apiReq = https.request(options, (apiRes) => {
+                    console.log(`[CHAT_API_LOG] OpenRouter response status: ${apiRes.statusCode}`);
                     apiRes.on('data', (chunk) => {
-                        // The existing logic for processing and writing chunks to res.write() should work
-                        // as `res` in Vercel is a ServerResponse compatible stream.
                         const chunkStr = chunk.toString();
+                        console.log('[CHAT_API_LOG] OpenRouter data chunk received:', chunkStr);
                         const eventLines = chunkStr.split('\n').filter(line => line.trim() !== '');
 
                         for (const line of eventLines) {
                             if (line.startsWith('data: ')) {
                                 const jsonData = line.substring('data: '.length);
                                 if (jsonData.trim().toLowerCase() === '[done]') {
+                                    console.log('[CHAT_API_LOG] Received [DONE] from OpenRouter stream.');
                                     res.write('data: [DONE]\n\n');
-                                    // Vercel might auto-end the response when the handler finishes.
-                                    // Explicitly ending might be good if apiRes can still emit 'end' or 'error'.
                                     return; 
                                 }
                                 try {
                                     const eventData = JSON.parse(jsonData);
                                     if (eventData.type === 'content_block_delta' && eventData.delta && eventData.delta.type === 'text_delta' && typeof eventData.delta.text === 'string') {
+                                        console.log('[CHAT_API_LOG] Streaming text delta (content_block_delta) to client.');
                                         res.write(`data: ${JSON.stringify({ text: eventData.delta.text })}\n\n`);
                                     }
                                     else if (eventData.choices && eventData.choices[0] && eventData.choices[0].delta && typeof eventData.choices[0].delta.content === 'string') {
+                                        console.log('[CHAT_API_LOG] Streaming text delta (choices.delta.content) to client.');
                                         res.write(`data: ${JSON.stringify({ text: eventData.choices[0].delta.content })}\n\n`);
                                     }
                                     else if (eventData.type === 'message_stop') {
+                                        console.log('[CHAT_API_LOG] Received message_stop from OpenRouter. Sending [DONE] to client.');
                                         res.write('data: [DONE]\n\n');
                                         return; 
+                                    } else {
+                                        console.log('[CHAT_API_LOG] Received unknown JSON data structure from OpenRouter:', jsonData);
                                     }
                                 } catch (e) {
-                                    console.error('Error parsing OpenRouter SSE data line:', jsonData, e);
+                                    console.error('[CHAT_API_ERROR] Error parsing OpenRouter SSE data line:', jsonData, 'Error:', e);
                                 }
+                            } else {
+                                console.log('[CHAT_API_LOG] Received non-data line from OpenRouter:', line);
                             }
                         }
                     });
                     apiRes.on('end', () => {
-                        if (!res.writableEnded) { // Vercel might end it automatically
+                        console.log('[CHAT_API_LOG] OpenRouter response stream ended.');
+                        if (!res.writableEnded) {
+                            console.log('[CHAT_API_LOG] Client response not ended, sending final [DONE] and ending.');
                             res.write('data: [DONE]\n\n');
                             res.end();
+                        } else {
+                            console.log('[CHAT_API_LOG] Client response already ended.');
                         }
                     });
                     apiRes.on('error', (e) => {
-                        console.error('Error from OpenRouter API response stream:', e);
+                        console.error('[CHAT_API_ERROR] Error from OpenRouter API response stream:', e);
                         if (!res.writableEnded) {
                             res.write(`data: ${JSON.stringify({ error: 'Stream error from AI service.' })}\n\n`);
                             res.write('data: [DONE]\n\n');
@@ -349,24 +358,34 @@ module.exports = async (req, res) => {
                 });
 
                 apiReq.on('error', (e) => {
-                    console.error('Error making request to OpenRouter:', e);
+                    console.error('[CHAT_API_ERROR] Error making request to OpenRouter:', e);
                     if (!res.writableEnded) {
-                        res.status(500).json({ error: 'Failed to connect to AI service.' });
+                        console.log('[CHAT_API_LOG] Sending 500 error to client due to OpenRouter request error.');
+                        res.write(`data: ${JSON.stringify({ error: 'Failed to connect to AI service.', details: e.message })}\n\n`);
+                        res.write('data: [DONE]\n\n');
+                        res.end();
                     }
                 });
 
+                console.log('[CHAT_API_LOG] Writing payload to OpenRouter request and ending request stream.');
                 apiReq.write(openRouterPayload);
                 apiReq.end();
+                console.log('[CHAT_API_LOG] OpenRouter request initiated.');
 
             } catch (error) {
-                console.error('Server error in /api/chat:', error);
-                if (!res.writableEnded) { // Check if response has already been sent
-                    res.status(500).json({ error: 'Internal server error.', details: error.message });
+                console.error('[CHAT_API_ERROR] Server error in /api/chat (outer try-catch):', error);
+                if (!res.writableEnded) {
+                    console.log('[CHAT_API_LOG] Sending error to client via SSE due to outer catch.');
+                    res.write(`data: ${JSON.stringify({ error: 'Internal server error.', details: error.message })}\n\n`);
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                } else {
+                     console.log('[CHAT_API_LOG] Outer catch: Response already ended.');
                 }
             }
         }); // End of req.on('end')
     } else {
-        // If not POST, Vercel's routing usually handles this, but can add a 405 if needed
+        console.log('[CHAT_API_LOG] Method not POST or OPTIONS. Sending 405.');
         res.setHeader('Allow', ['POST', 'OPTIONS']);
         res.status(405).json({ error: `Method ${req.method} not allowed.` });
     }
