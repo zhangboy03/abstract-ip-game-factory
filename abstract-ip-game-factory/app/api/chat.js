@@ -1,5 +1,5 @@
-require('dotenv').config({ path: require('path').resolve(process.cwd(), '.env.local') });
-const http = require('http');
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env.local') });
+// Removed http require, not needed for Vercel serverless
 const https = require('https');
 
 // This is a placeholder for a server-side API endpoint (e.g., using Node.js, Express, or a serverless function).
@@ -140,36 +140,44 @@ http.createServer(async (req, res) => {
         res.writeHead(404);
         res.end('Not Found');
     }
-}).listen(3000, () => {
-    console.log('Server listening on port 3000 for /api/chat');
 });
 */
 // Actual implementation starts here
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const CLAUDE_MODEL = "anthropic/claude-3.7-sonnet"; // Updated model ID
 
-const server = http.createServer(async (req, res) => {
+module.exports = async (req, res) => {
     // Set CORS headers for all responses
-    res.setHeader('Access-Control-Allow-Origin', 'http://localhost:8080'); // Or '*' for less restrictive
+    // This will be updated later to the specific Vercel frontend URL
+    res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); // Added Authorization if you plan to use it
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    // Handle OPTIONS preflight request
-    if (req.method === 'OPTIONS' && (req.url === '/api/chat' || req.url === '/api/generate')) { // Combined OPTIONS handling
-        res.writeHead(204); // No Content
-        res.end();
+    if (req.method === 'OPTIONS') {
+        res.status(204).end();
         return;
     }
 
-    if (req.method === 'POST' && req.url === '/api/chat') {
+    // Vercel automatically parses the body for common content types like application/json
+    // For other types or manual parsing, you'd read from `req` stream.
+    // The existing code reads the body manually, which is fine.
+    // req.url is still the path, e.g., '/api/chat' (though for Vercel, file name implies path)
+
+    if (req.method === 'POST') { // Vercel routes POST requests to the function
         if (!OPENROUTER_API_KEY) {
             console.error('OPENROUTER_API_KEY is not set.');
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Server configuration error: Missing API key.' }));
+            res.status(500).json({ error: 'Server configuration error: Missing API key.' });
             return;
         }
 
+        // The original code uses req.on('data') and req.on('end') to build up the requestBody.
+        // This is okay, but for Vercel, if the client sends 'Content-Type: application/json',
+        // `req.body` would typically be pre-parsed.
+        // However, since the original code is robust, let's adapt it minimally first.
+        // If `req.body` is available from Vercel, we can simplify later.
+
         let requestBody = '';
+        // Vercel's `req` object is a stream.Readable, so .on('data') and .on('end') work.
         req.on('data', chunk => {
             requestBody += chunk.toString();
         });
@@ -179,10 +187,8 @@ const server = http.createServer(async (req, res) => {
                 const { conversation, imgURL, audioURL } = JSON.parse(requestBody);
 
                 if (!conversation || !Array.isArray(conversation)) {
-                    // Allow empty conversation if imgURL or audioURL is present for initial message
                     if (!imgURL && !audioURL) {
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ error: 'Invalid request: conversation array is required or imgURL/audioURL for initial prompt.' }));
+                        res.status(400).json({ error: 'Invalid request: conversation array is required or imgURL/audioURL for initial prompt.' });
                         return;
                     }
                 }
@@ -191,10 +197,10 @@ const server = http.createServer(async (req, res) => {
                                     【重要原则】：
                                             1. 【IP中心化】：你的所有设计和建议都必须严格围绕用户提供的IP。图片（imgURL）是核心，你要充分理解其视觉特征、风格和潜在主题，并将其作为游戏的主角或核心元素。音频（audioURL）如果提供，也应紧密结合IP的行为或关键游戏事件。
                                             2. 【禁止原创IP元素】：绝不允许你为用户提供的IP添加任何非衍生的新视觉特征，或创作全新的、与用户IP无关的角色/核心元素。你的职责是利用【用户的IP】，而不是创造新的。
-                                            3. 【忠于经典，IP适配，简约至上】：你的主要目标是制作一款能让人一眼认出其原型的经典游戏的“IP定制版”。
+                                            3. 【忠于经典，IP适配，简约至上】：你的主要目标是制作一款能让人一眼认出其原型的经典游戏的"IP定制版"。
                                             4. 【核心玩法不变】：必须最大限度地保留其【核心玩法循环】和基本规则。
                                             5. 【IP化视觉】：UI界面、色彩搭配、整体视觉风格应参考用户IP图片的风格（如像素风、卡通风等）。
-                                            6. 【“轻”创新】：对核心玩法的轻微修改或与IP主题相关的趣味机制，绝不能让游戏变得复杂或不可识别。
+                                            6. 【"轻"创新】：对核心玩法的轻微修改或与IP主题相关的趣味机制，绝不能让游戏变得复杂或不可识别。
                                             7. 【简洁实现】：机制简洁，易于理解和直接上手。
 
                                     用户提供的图片会以URL形式包含在消息中。你应直接理解图片内容获取灵感。如图片过于抽象，应主动询问用户的IP关键特征、想表达的感觉或主题。
@@ -203,13 +209,13 @@ const server = http.createServer(async (req, res) => {
 1. 接收imgURL（必须）和audioURL（可选）。
 2. 引导用户聊想法。
 3. 第一次方案应非常简洁，例如：
-   “好的，我们可以尝试制作一款IP定制版的【经典游戏名称】。您的IP将作为【主角/核心元素】，主要玩法保持原汁原味，视觉风格贴合您的IP。我们可以先基于此生成一个版本。”
+   "好的，我们可以尝试制作一款IP定制版的【经典游戏名称】。您的IP将作为【主角/核心元素】，主要玩法保持原汁原味，视觉风格贴合您的IP。我们可以先基于此生成一个版本。"
 
-4. 提问用户：“您希望我们现在就生成游戏？还是一步步讨论玩法和细节？我可以引导您细化。”
+4. 提问用户："您希望我们现在就生成游戏？还是一步步讨论玩法和细节？我可以引导您细化。"
 
 5. 根据选择行动：
-   a. 如果用户选择【直接生成】，或者【详细讨论】后用户表示“OK”或类似意愿确认生成：
-      i.  首先，回复一句自然的确认话语，例如：“好的，我们来生成游戏吧！”或者“明白了，正在为您准备游戏，请稍候...” 这句话会直接显示给用户。
+   a. 如果用户选择【直接生成】，或者【详细讨论】后用户表示"OK"或类似意愿确认生成：
+      i.  首先，回复一句自然的确认话语，例如："好的，我们来生成游戏吧！"或者"明白了，正在为您准备游戏，请稍候..." 这句话会直接显示给用户。
       ii. 然后，【非常重要：这必须是你当前回复的最后一部分，不要有任何其他文字跟在后面】，紧接着输出一个特殊标记和JSON数据，严格按照以下格式：
           GENERATION_JSON_PAYLOAD:::{"gameRequest": "游戏类型", "twist": "游戏特性", "requirements": ["要求1", "要求2"]}
           (注意：请将示例JSON中的描述替换为实际构思好的游戏内容。GENERATION_JSON_PAYLOAD::: 和左花括号 { 之间绝不能有任何空格或换行。)
@@ -230,14 +236,11 @@ const server = http.createServer(async (req, res) => {
                             const userMessageContent = [];
                             let originalUserText = '';
 
-                            // Check if msg.content is already the array structure from a previous turn
                             if (Array.isArray(msg.content)) {
                                 const textBlock = msg.content.find(c => c.type === 'text');
                                 if (textBlock) originalUserText = textBlock.text;
-                                // If it's already structured, and it's the last message, ensure imgURL is current.
-                                // However, it's simpler to reconstruct if it's the last user message needing media.
                             } else {
-                                originalUserText = msg.content; // It's a simple string
+                                originalUserText = msg.content; 
                             }
 
                             if (isLastUserMessage(userMessagesProcessed, conversation) && imgURL) {
@@ -246,10 +249,8 @@ const server = http.createServer(async (req, res) => {
                                     image_url: { url: imgURL }
                                 });
                             }
-                            // Always add the text part
                             let textForUser = originalUserText;
                             if (isLastUserMessage(userMessagesProcessed, conversation) && audioURL) {
-                                // Append audio URL info to the text part if it's the last message
                                 textForUser += `\n[用户提供的音频链接: ${audioURL}]`;
                             }
                             userMessageContent.push({ type: "text", text: textForUser });
@@ -257,10 +258,10 @@ const server = http.createServer(async (req, res) => {
                             messagesForAPI.push({ role: 'user', content: userMessageContent });
                             userMessagesProcessed++;
                         } else {
-                            messagesForAPI.push(msg); // Add assistant messages as is
+                            messagesForAPI.push(msg); 
                         }
                     });
-                } else if (imgURL) { // Conversation is empty, but we have an image (and maybe audio) - initial prompt
+                } else if (imgURL) { 
                     const initialUserContent = [];
                     initialUserContent.push({
                         type: "image_url",
@@ -290,16 +291,17 @@ const server = http.createServer(async (req, res) => {
                         'Content-Length': Buffer.byteLength(openRouterPayload)
                     }
                 };
-
-                res.writeHead(200, {
-                    'Content-Type': 'text/event-stream',
-                    'Cache-Control': 'no-cache',
-                    'Connection': 'keep-alive',
-                    'Access-Control-Allow-Origin': '*'
-                });
+                
+                // Set headers for SSE response
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+                // Access-Control-Allow-Origin is already set globally at the start of the function
 
                 const apiReq = https.request(options, (apiRes) => {
                     apiRes.on('data', (chunk) => {
+                        // The existing logic for processing and writing chunks to res.write() should work
+                        // as `res` in Vercel is a ServerResponse compatible stream.
                         const chunkStr = chunk.toString();
                         const eventLines = chunkStr.split('\n').filter(line => line.trim() !== '');
 
@@ -308,7 +310,9 @@ const server = http.createServer(async (req, res) => {
                                 const jsonData = line.substring('data: '.length);
                                 if (jsonData.trim().toLowerCase() === '[done]') {
                                     res.write('data: [DONE]\n\n');
-                                    return;
+                                    // Vercel might auto-end the response when the handler finishes.
+                                    // Explicitly ending might be good if apiRes can still emit 'end' or 'error'.
+                                    return; 
                                 }
                                 try {
                                     const eventData = JSON.parse(jsonData);
@@ -329,7 +333,7 @@ const server = http.createServer(async (req, res) => {
                         }
                     });
                     apiRes.on('end', () => {
-                        if (!res.writableEnded) {
+                        if (!res.writableEnded) { // Vercel might end it automatically
                             res.write('data: [DONE]\n\n');
                             res.end();
                         }
@@ -347,8 +351,7 @@ const server = http.createServer(async (req, res) => {
                 apiReq.on('error', (e) => {
                     console.error('Error making request to OpenRouter:', e);
                     if (!res.writableEnded) {
-                        res.writeHead(500, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ error: 'Failed to connect to AI service.' }));
+                        res.status(500).json({ error: 'Failed to connect to AI service.' });
                     }
                 });
 
@@ -357,30 +360,23 @@ const server = http.createServer(async (req, res) => {
 
             } catch (error) {
                 console.error('Server error in /api/chat:', error);
-                if (!res.writableEnded) {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'Internal server error.' }));
+                if (!res.writableEnded) { // Check if response has already been sent
+                    res.status(500).json({ error: 'Internal server error.', details: error.message });
                 }
             }
-        });
+        }); // End of req.on('end')
     } else {
-        // If not OPTIONS or POST to /api/chat, send 404 or a more specific error
-        if (req.url !== '/api/chat') { // Only send 404 if the path is wrong
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Not Found' }));
-        } else { // Path is /api/chat but method is not POST or OPTIONS
-            res.writeHead(405, { 'Content-Type': 'application/json' }); // Method Not Allowed
-            res.end(JSON.stringify({ error: `Method ${req.method} not allowed for /api/chat` }));
-        }
+        // If not POST, Vercel's routing usually handles this, but can add a 405 if needed
+        res.setHeader('Allow', ['POST', 'OPTIONS']);
+        res.status(405).json({ error: `Method ${req.method} not allowed.` });
     }
-});
+};
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log("Server listening on port " + PORT + " for /api/chat");
-    console.log("Ensure OPENROUTER_API_KEY environment variable is set.");
-    if (!OPENROUTER_API_KEY) {
-        console.warn('Warning: OPENROUTER_API_KEY is not set. API calls will fail.');
-    }
-    console.log("Note: Client-side (public/js/chat.js) may need updates to send requests in the format { conversation, imgURL, audioURL } to this endpoint.");
-}); 
+// Removed server.listen() and associated console logs
+// Ensure OPENROUTER_API_KEY is set in Vercel environment variables.
+// The `path` for `dotenv` might need adjustment if `.env.local` isn't at `../../.env.local` relative to `app/api/chat.js` in Vercel's build.
+// It's better to rely solely on Vercel's environment variable system for API keys.
+// The initial require('dotenv') can be removed if API keys are only set via Vercel UI.
+// For local development, you might still use dotenv, but Vercel won't use the .env.local file from your repo directly for deployed functions.
+
+// Note: Client-side (public/js/chat.js) may need updates to send requests in the format { conversation, imgURL, audioURL } to this endpoint. 

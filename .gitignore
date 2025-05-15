@@ -1,2 +1,10 @@
-node_modules
-node_modules
+# General ignores
+.DS_Store
+
+# Top-level Node modules (if any, prefer project-specific)
+/node_modules/
+
+# Specific project virtual environments (example for mindless_attractor if it uses one)
+# mindless_attractor/mindless_env/
+
+# Add other global ignores as needed

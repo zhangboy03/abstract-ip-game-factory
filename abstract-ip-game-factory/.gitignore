@@ -1,0 +1,7 @@
+# Environment variables
+.env.local
+
+# Dependencies
+/node_modules/
+
+# Other project-specific ignores if any (e.g., build artifacts) 
