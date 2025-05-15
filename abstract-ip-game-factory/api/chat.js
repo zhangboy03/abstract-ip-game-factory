@@ -144,7 +144,7 @@ http.createServer(async (req, res) => {
 */
 // Actual implementation starts here
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const CLAUDE_MODEL = "google/gemini-2.5-pro-preview"; // Updated model ID for Gemini Pro
+const TARGET_MODEL = "google/gemini-2.5-pro-preview"; 
 
 module.exports = async (req, res) => {
     console.log('[CHAT_API_LOG] Function invoked. Method:', req.method, 'URL:', req.url);
@@ -181,18 +181,9 @@ module.exports = async (req, res) => {
                 const { conversation, imgURL, audioURL } = JSON.parse(requestBody);
                 console.log('[CHAT_API_LOG] Request body parsed. Conversation length:', conversation ? conversation.length : 'N/A', 'imgURL present:', !!imgURL, 'audioURL present:', !!audioURL);
 
-                if (!conversation || !Array.isArray(conversation)) {
-                    if (!imgURL && !audioURL) {
-                        console.error('[CHAT_API_ERROR] Invalid request: conversation array is required or imgURL/audioURL for initial prompt.');
-                        res.status(400).json({ error: 'Invalid request: conversation array is required or imgURL/audioURL for initial prompt.' });
-                        return;
-                    }
-                    console.log('[CHAT_API_LOG] Initial prompt (no prior conversation).');
-                }
-
-                const systemPrompt = `你是一位富有创造力且技术精湛的HTML5游戏开发专家和游戏设计师。你的核心任务是与用户交流，帮助他们将一个【用户提供的抽象IP】（必须使用用户通过imgURL提供的图片，以及可选的audioURL提供的音频）融入一款经典游戏的魔改版。
+                const systemPrompt = `你是一位富有创造力且技术精湛的HTML5游戏开发专家和游戏设计师。你的核心任务是与用户交流，帮助他们将一个【用户提供的抽象IP】（图片会以URL的形式通过消息中的 image_url 字段提供，可选的audioURL提供的音频也会在文本中注明）融入一款经典游戏的魔改版。
                                     【重要原则】：
-                                            1. 【IP中心化】：你的所有设计和建议都必须严格围绕用户提供的IP。图片（imgURL）是核心，你要充分理解其视觉特征、风格和潜在主题，并将其作为游戏的主角或核心元素。音频（audioURL）如果提供，也应紧密结合IP的行为或关键游戏事件。
+                                            1. 【IP中心化】：你的所有设计和建议都必须严格围绕用户提供的IP。图片URL (imgURL) 指向的图片是核心，你要充分理解其视觉特征、风格和潜在主题，并将其作为游戏的主角或核心元素。音频（audioURL）如果提供，也应紧密结合IP的行为或关键游戏事件。
                                             2. 【禁止原创IP元素】：绝不允许你为用户提供的IP添加任何非衍生的新视觉特征，或创作全新的、与用户IP无关的角色/核心元素。你的职责是利用【用户的IP】，而不是创造新的。
                                             3. 【忠于经典，IP适配，简约至上】：你的主要目标是制作一款能让人一眼认出其原型的经典游戏的"IP定制版"。
                                             4. 【核心玩法不变】：必须最大限度地保留其【核心玩法循环】和基本规则。
@@ -200,7 +191,7 @@ module.exports = async (req, res) => {
                                             6. 【"轻"创新】：对核心玩法的轻微修改或与IP主题相关的趣味机制，绝不能让游戏变得复杂或不可识别。
                                             7. 【简洁实现】：机制简洁，易于理解和直接上手。
 
-                                    用户提供的图片会以URL形式包含在消息中。你应直接理解图片内容获取灵感。如图片过于抽象，应主动询问用户的IP关键特征、想表达的感觉或主题。
+                                    用户提供的图片会以URL形式通过消息中的 image_url 字段提供。你应直接理解图片内容获取灵感。如图片过于抽象，或URL无法访问，应主动询问用户的IP关键特征、想表达的感觉或主题，或提示用户图片可能有问题。
 
 【交互流程】：
 1. 接收imgURL（必须）和audioURL（可选）。
@@ -221,60 +212,80 @@ module.exports = async (req, res) => {
 6. 【关键指令】：当AI按上述步骤5.a.ii的格式输出以 GENERATION_JSON_PAYLOAD::: 开头的数据时，客户端程序会自动识别这个标记，提取JSON用于游戏生成，并且【不会向用户显示这个标记和它后面的JSON本身】。所以，你的确认话语（第5.a.i步）就是用户看到的关于生成操作的最后信息。
 
 请以友好、鼓励和激发创意的语气与用户交流。现在开始对话吧！`;
-            
 
                 const messagesForAPI = [{ "role": "system", "content": systemPrompt }];
-                let userMessagesProcessed = 0;
-                const isLastUserMessage = (idx, arr) => arr.filter(m => m.role === 'user').length === idx + 1;
+                
+                // Determine if this is the initial message turn (no prior user messages in the conversation array yet from this session)
+                // or if it's a subsequent message in an ongoing conversation.
+                const isInitialUserTurn = !conversation || conversation.filter(m => m.role === 'user').length === 0;
 
                 if (conversation && conversation.length > 0) {
-                    conversation.forEach((msg, index) => {
+                    conversation.forEach((msg) => {
                         if (msg.role === 'user') {
                             const userMessageContent = [];
                             let originalUserText = '';
-
-                            if (Array.isArray(msg.content)) {
-                                const textBlock = msg.content.find(c => c.type === 'text');
-                                if (textBlock) originalUserText = textBlock.text;
+                            if (Array.isArray(msg.content)) { // If content is already structured
+                                msg.content.forEach(part => {
+                                    if (part.type === 'text') originalUserText += part.text;
+                                    // Keep other parts if any, though we primarily focus on text and our own image injection
+                                });
                             } else {
                                 originalUserText = msg.content; 
                             }
 
-                            if (isLastUserMessage(userMessagesProcessed, conversation) && imgURL) {
-                                userMessageContent.push({
-                                    type: "image_url",
-                                    image_url: { url: imgURL }
-                                });
-                            }
                             let textForUser = originalUserText;
-                            if (isLastUserMessage(userMessagesProcessed, conversation) && audioURL) {
-                                textForUser += `\n[用户提供的音频链接: ${audioURL}]`;
+                            // For subsequent messages, only add imgURL if it's explicitly part of this message from client
+                            // (currently client sends imgURL globally, so we add it to the last user message struct)
+                            // This logic assumes imgURL/audioURL are associated with the *latest* user interaction.
+                            if (imgURL || audioURL) { // Check if we need to reconstruct based on global imgURL/audioURL
+                                userMessageContent.push({ type: "text", text: textForUser });
+                                if (imgURL) {
+                                     console.log("[CHAT_API_LOG] Adding imgURL to existing user message content array: ", imgURL);
+                                     userMessageContent.push({ type: "image_url", image_url: { url: imgURL } });
+                                }
+                                // AudioURL is appended to text for now
+                                if (audioURL) {
+                                    const textPart = userMessageContent.find(p => p.type ==='text');
+                                    if (textPart) textPart.text += `\n[用户提供的音频链接: ${audioURL}]`;
+                                    else userMessageContent.unshift({ type: "text", text: `[用户提供的音频链接: ${audioURL}]`});
+                                }
+                                messagesForAPI.push({ role: 'user', content: userMessageContent });
+                            } else {
+                                messagesForAPI.push(msg); // Pass through if no global imgURL/audioURL to inject
                             }
-                            userMessageContent.push({ type: "text", text: textForUser });
-                            
-                            messagesForAPI.push({ role: 'user', content: userMessageContent });
-                            userMessagesProcessed++;
                         } else {
-                            messagesForAPI.push(msg); 
+                            messagesForAPI.push(msg); // Pass through assistant messages
                         }
                     });
-                } else if (imgURL) { 
+                } else { // This is the first turn from the user, or conversation was empty
                     const initialUserContent = [];
-                    initialUserContent.push({
-                        type: "image_url",
-                        image_url: { url: imgURL }
-                    });
-                    let initialText = "你好，这是我提供的素材，请根据这些素材和我聊聊游戏创意吧！";
-                    if (audioURL) {
-                        initialText += `\n[用户提供的音频链接: ${audioURL}]`;
-                    }
+                    let initialText = "你好，这是我提供的素材，请根据这些素材和我聊聊游戏创意吧！"; // Default initial text
+                    // Client sends conversation as empty array for first message, with imgURL/audioURL as separate top-level fields.
+                    // So, if conversation is empty, we construct the first user message.
+                    
                     initialUserContent.push({ type: "text", text: initialText });
+
+                    if (imgURL) {
+                        console.log("[CHAT_API_LOG] Adding imgURL to initial user message content array: ", imgURL);
+                        initialUserContent.push({ type: "image_url", image_url: { url: imgURL } });
+                    }
+                    if (audioURL) {
+                         const textPart = initialUserContent.find(p => p.type ==='text');
+                         if (textPart) textPart.text += `\n[用户提供的音频链接: ${audioURL}]`;
+                         // This case should not happen if text is always added first
+                         else initialUserContent.unshift({ type: "text", text: `[用户提供的音频链接: ${audioURL}]`}); 
+                    }
                     messagesForAPI.push({ role: 'user', content: initialUserContent });
                 }
+
+
                 console.log('[CHAT_API_LOG] Prepared messages for OpenRouter API. Total messages:', messagesForAPI.length);
+                if (messagesForAPI.length > 1 && messagesForAPI[messagesForAPI.length - 1].content) {
+                    console.log('[CHAT_API_LOG] Last message content to OpenRouter (first 200 chars):', JSON.stringify(messagesForAPI[messagesForAPI.length - 1].content).substring(0,200) + '...');
+                }
 
                 const openRouterPayload = JSON.stringify({
-                    model: CLAUDE_MODEL,
+                    model: TARGET_MODEL,
                     messages: messagesForAPI,
                     stream: true
                 });
@@ -360,7 +371,7 @@ module.exports = async (req, res) => {
                 apiReq.on('error', (e) => {
                     console.error('[CHAT_API_ERROR] Error making request to OpenRouter:', e);
                     if (!res.writableEnded) {
-                        console.log('[CHAT_API_LOG] Sending 500 error to client due to OpenRouter request error.');
+                        console.log('[CHAT_API_LOG] Sending error to client via SSE due to OpenRouter request error.');
                         res.write(`data: ${JSON.stringify({ error: 'Failed to connect to AI service.', details: e.message })}\n\n`);
                         res.write('data: [DONE]\n\n');
                         res.end();
