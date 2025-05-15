@@ -1,5 +1,4 @@
-require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env.local') });
-const https = require('https');
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env.local') });
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 // Consider Haiku for faster/cheaper generation if complexity allows, or Sonnet for more complex games.

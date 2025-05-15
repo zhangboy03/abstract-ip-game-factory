@@ -1,4 +1,4 @@
-require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env.local') });
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env.local') });
 const formidable = require('formidable');
 const fs = require('fs');
 const fetch = require('node-fetch'); // Use node-fetch v2 for CommonJS

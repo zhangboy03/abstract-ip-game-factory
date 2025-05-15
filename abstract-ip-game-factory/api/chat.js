@@ -1,4 +1,4 @@
-require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env.local') });
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env.local') });
 // Removed http require, not needed for Vercel serverless
 const https = require('https');
 
