@@ -2,7 +2,7 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../.env.loc
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 // Consider Haiku for faster/cheaper generation if complexity allows, or Sonnet for more complex games.
-const CLAUDE_MODEL_FOR_GENERATION = "anthropic/claude-3.7-sonnet"; // Updated model ID
+const CLAUDE_MODEL_FOR_GENERATION = "google/gemini-2.5-pro-preview"; // Updated model ID for Gemini Pro
 
 module.exports = async (req, res) => {
     // Set CORS headers

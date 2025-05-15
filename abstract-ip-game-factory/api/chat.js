@@ -144,7 +144,7 @@ http.createServer(async (req, res) => {
 */
 // Actual implementation starts here
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const CLAUDE_MODEL = "anthropic/claude-3.7-sonnet"; // User confirmed this model name was working locally
+const CLAUDE_MODEL = "google/gemini-2.5-pro-preview"; // Updated model ID for Gemini Pro
 
 module.exports = async (req, res) => {
     console.log('[CHAT_API_LOG] Function invoked. Method:', req.method, 'URL:', req.url);
