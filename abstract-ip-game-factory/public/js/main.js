@@ -86,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Potentially disable image/audio upload buttons too, or show specific loader
 
             try {
-                const response = await fetch('http://localhost:3002/api/upload-image', {
+                const response = await fetch('/api/upload-image', {
                     method: 'POST',
                     body: formData,
                 });
@@ -134,7 +134,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setLoadingState(true, sendButton);
 
             try {
-                const response = await fetch('http://localhost:3003/api/upload-audio', {
+                const response = await fetch('/api/upload-audio', {
                     method: 'POST',
                     body: formData,
                 });
@@ -240,7 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         
         try {
-            const response = await fetch('http://localhost:3000/api/chat', { 
+            const response = await fetch('/api/chat', { 
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -448,7 +448,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             console.log("Calling /api/generate with:", gameParams, "Img:", currentUploadedImageURL, "Audio:", currentUploadedAudioURL);
-            const response = await fetch('http://localhost:3001/api/generate', {
+            const response = await fetch('/api/generate', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
