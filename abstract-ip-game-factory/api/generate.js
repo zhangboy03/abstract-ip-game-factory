@@ -3,7 +3,7 @@ const https = require('https'); // Added https for OpenRouter API calls
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 // Consider Haiku for faster/cheaper generation if complexity allows, or Sonnet for more complex games.
-const TARGET_MODEL_FOR_GENERATION = "google/gemini-2.5-pro-preview"; // Updated model ID for Gemini Pro
+const TARGET_MODEL_FOR_GENERATION = "anthropic/claude-3.7-sonnet"; // Reverted to Claude model
 
 module.exports = async (req, res) => {
     console.log('[GEN_API_LOG] /api/generate function invoked. Method:', req.method);

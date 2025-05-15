@@ -144,7 +144,7 @@ http.createServer(async (req, res) => {
 */
 // Actual implementation starts here
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const TARGET_MODEL = "google/gemini-2.5-pro-preview"; 
+const TARGET_MODEL = "anthropic/claude-3.7-sonnet"; // Reverted to Claude model
 
 module.exports = async (req, res) => {
     console.log('[CHAT_API_LOG] Function invoked. Method:', req.method, 'URL:', req.url);
@@ -181,6 +181,7 @@ module.exports = async (req, res) => {
                 const { conversation, imgURL, audioURL } = JSON.parse(requestBody);
                 console.log('[CHAT_API_LOG] Request body parsed. Conversation length:', conversation ? conversation.length : 'N/A', 'imgURL present:', !!imgURL, 'audioURL present:', !!audioURL);
 
+                // System prompt tailored for Claude, assuming image URL is passed in message content
                 const systemPrompt = `你是一位富有创造力且技术精湛的HTML5游戏开发专家和游戏设计师。你的核心任务是与用户交流，帮助他们将一个【用户提供的抽象IP】（图片会以URL的形式通过消息中的 image_url 字段提供，可选的audioURL提供的音频也会在文本中注明）融入一款经典游戏的魔改版。
                                     【重要原则】：
                                             1. 【IP中心化】：你的所有设计和建议都必须严格围绕用户提供的IP。图片URL (imgURL) 指向的图片是核心，你要充分理解其视觉特征、风格和潜在主题，并将其作为游戏的主角或核心元素。音频（audioURL）如果提供，也应紧密结合IP的行为或关键游戏事件。
@@ -215,53 +216,44 @@ module.exports = async (req, res) => {
 
                 const messagesForAPI = [{ "role": "system", "content": systemPrompt }];
                 
-                // Determine if this is the initial message turn (no prior user messages in the conversation array yet from this session)
-                // or if it's a subsequent message in an ongoing conversation.
-                const isInitialUserTurn = !conversation || conversation.filter(m => m.role === 'user').length === 0;
-
                 if (conversation && conversation.length > 0) {
-                    conversation.forEach((msg) => {
-                        if (msg.role === 'user') {
+                    // Pass along existing conversation, imgURL/audioURL will be added to the newest user message if applicable
+                    conversation.forEach((msg, index) => {
+                        if (msg.role === 'user' && index === conversation.length - 1) { // Only modify the last user message
                             const userMessageContent = [];
                             let originalUserText = '';
-                            if (Array.isArray(msg.content)) { // If content is already structured
+                            if (Array.isArray(msg.content)) { 
+                                const textPart = msg.content.find(p => p.type === 'text');
+                                if (textPart) originalUserText = textPart.text;
+                                // Include other non-text, non-image_url parts if any, though not expected for user
                                 msg.content.forEach(part => {
-                                    if (part.type === 'text') originalUserText += part.text;
-                                    // Keep other parts if any, though we primarily focus on text and our own image injection
+                                    if (part.type !== 'text' && part.type !== 'image_url') {
+                                        userMessageContent.push(part);
+                                    }
                                 });
                             } else {
                                 originalUserText = msg.content; 
                             }
 
-                            let textForUser = originalUserText;
-                            // For subsequent messages, only add imgURL if it's explicitly part of this message from client
-                            // (currently client sends imgURL globally, so we add it to the last user message struct)
-                            // This logic assumes imgURL/audioURL are associated with the *latest* user interaction.
-                            if (imgURL || audioURL) { // Check if we need to reconstruct based on global imgURL/audioURL
-                                userMessageContent.push({ type: "text", text: textForUser });
-                                if (imgURL) {
-                                     console.log("[CHAT_API_LOG] Adding imgURL to existing user message content array: ", imgURL);
-                                     userMessageContent.push({ type: "image_url", image_url: { url: imgURL } });
-                                }
-                                // AudioURL is appended to text for now
-                                if (audioURL) {
-                                    const textPart = userMessageContent.find(p => p.type ==='text');
-                                    if (textPart) textPart.text += `\n[用户提供的音频链接: ${audioURL}]`;
-                                    else userMessageContent.unshift({ type: "text", text: `[用户提供的音频链接: ${audioURL}]`});
-                                }
-                                messagesForAPI.push({ role: 'user', content: userMessageContent });
-                            } else {
-                                messagesForAPI.push(msg); // Pass through if no global imgURL/audioURL to inject
+                            userMessageContent.push({ type: "text", text: originalUserText });
+
+                            if (imgURL) {
+                                 console.log("[CHAT_API_LOG] Adding imgURL to last user message content array: ", imgURL);
+                                 userMessageContent.push({ type: "image_url", image_url: { url: imgURL } });
                             }
+                            if (audioURL) {
+                                const textPartToUpdate = userMessageContent.find(p => p.type ==='text');
+                                if (textPartToUpdate) textPartToUpdate.text += `\n[用户提供的音频链接: ${audioURL}]`;
+                                else userMessageContent.unshift({ type: "text", text: `[用户提供的音频链接: ${audioURL}]`});
+                            }
+                            messagesForAPI.push({ role: 'user', content: userMessageContent });
                         } else {
-                            messagesForAPI.push(msg); // Pass through assistant messages
+                            messagesForAPI.push(msg); // Pass through other messages as is
                         }
                     });
-                } else { // This is the first turn from the user, or conversation was empty
+                } else { // This is the first turn from the user
                     const initialUserContent = [];
-                    let initialText = "你好，这是我提供的素材，请根据这些素材和我聊聊游戏创意吧！"; // Default initial text
-                    // Client sends conversation as empty array for first message, with imgURL/audioURL as separate top-level fields.
-                    // So, if conversation is empty, we construct the first user message.
+                    let initialText = "你好，这是我提供的素材，请根据这些素材和我聊聊游戏创意吧！"; 
                     
                     initialUserContent.push({ type: "text", text: initialText });
 
@@ -270,17 +262,15 @@ module.exports = async (req, res) => {
                         initialUserContent.push({ type: "image_url", image_url: { url: imgURL } });
                     }
                     if (audioURL) {
-                         const textPart = initialUserContent.find(p => p.type ==='text');
-                         if (textPart) textPart.text += `\n[用户提供的音频链接: ${audioURL}]`;
-                         // This case should not happen if text is always added first
+                         const textPartToUpdate = initialUserContent.find(p => p.type ==='text');
+                         if (textPartToUpdate) textPartToUpdate.text += `\n[用户提供的音频链接: ${audioURL}]`;
                          else initialUserContent.unshift({ type: "text", text: `[用户提供的音频链接: ${audioURL}]`}); 
                     }
                     messagesForAPI.push({ role: 'user', content: initialUserContent });
                 }
 
-
                 console.log('[CHAT_API_LOG] Prepared messages for OpenRouter API. Total messages:', messagesForAPI.length);
-                if (messagesForAPI.length > 1 && messagesForAPI[messagesForAPI.length - 1].content) {
+                if (messagesForAPI.length > 1 && messagesForAPI[messagesForAPI.length -1 ].content) {
                     console.log('[CHAT_API_LOG] Last message content to OpenRouter (first 200 chars):', JSON.stringify(messagesForAPI[messagesForAPI.length - 1].content).substring(0,200) + '...');
                 }
 
