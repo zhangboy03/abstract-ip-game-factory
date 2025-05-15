@@ -1,3 +1,7 @@
+require('dotenv').config({ path: require('path').resolve(process.cwd(), '.env.local') });
+const http = require('http');
+const https = require('https');
+
 // This is a placeholder for a server-side API endpoint (e.g., using Node.js, Express, or a serverless function).
 // It should handle POST requests to /api/chat.
 
@@ -141,13 +145,22 @@ http.createServer(async (req, res) => {
 });
 */
 // Actual implementation starts here
-const http = require('http');
-const https = require('https');
-
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const CLAUDE_MODEL = "anthropic/claude-3-sonnet"; // User specified model
+const CLAUDE_MODEL = "anthropic/claude-3.7-sonnet"; // Updated model ID
 
 const server = http.createServer(async (req, res) => {
+    // Set CORS headers for all responses
+    res.setHeader('Access-Control-Allow-Origin', 'http://localhost:8080'); // Or '*' for less restrictive
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); // Added Authorization if you plan to use it
+
+    // Handle OPTIONS preflight request
+    if (req.method === 'OPTIONS' && (req.url === '/api/chat' || req.url === '/api/generate')) { // Combined OPTIONS handling
+        res.writeHead(204); // No Content
+        res.end();
+        return;
+    }
+
     if (req.method === 'POST' && req.url === '/api/chat') {
         if (!OPENROUTER_API_KEY) {
             console.error('OPENROUTER_API_KEY is not set.');
@@ -166,71 +179,104 @@ const server = http.createServer(async (req, res) => {
                 const { conversation, imgURL, audioURL } = JSON.parse(requestBody);
 
                 if (!conversation || !Array.isArray(conversation)) {
-                    res.writeHead(400, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'Invalid request: conversation array is required.' }));
-                    return;
-                }
-
-                const messages = [{ "role": "system", "content": "You are an expert HTML5 game developer..." }];
-                messages.push(...conversation);
-
-                // Find the last user message to augment with imgURL and audioURL
-                let lastUserMessageIndex = -1;
-                for (let i = messages.length - 1; i >= 0; i--) {
-                    if (messages[i].role === 'user') {
-                        lastUserMessageIndex = i;
-                        break;
+                    // Allow empty conversation if imgURL or audioURL is present for initial message
+                    if (!imgURL && !audioURL) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Invalid request: conversation array is required or imgURL/audioURL for initial prompt.' }));
+                        return;
                     }
                 }
 
-                if (lastUserMessageIndex !== -1) {
-                    let userMessage = messages[lastUserMessageIndex];
-                    let contentForClaude = [];
+                const systemPrompt = `你是一位富有创造力且技术精湛的HTML5游戏开发专家和游戏设计师。你的核心任务是与用户交流，帮助他们将一个【用户提供的抽象IP】（必须使用用户通过imgURL提供的图片，以及可选的audioURL提供的音频）融入一款经典游戏的魔改版。
+                                    【重要原则】：
+                                            1. 【IP中心化】：你的所有设计和建议都必须严格围绕用户提供的IP。图片（imgURL）是核心，你要充分理解其视觉特征、风格和潜在主题，并将其作为游戏的主角或核心元素。音频（audioURL）如果提供，也应紧密结合IP的行为或关键游戏事件。
+                                            2. 【禁止原创IP元素】：绝不允许你为用户提供的IP添加任何非衍生的新视觉特征，或创作全新的、与用户IP无关的角色/核心元素。你的职责是利用【用户的IP】，而不是创造新的。
+                                            3. 【忠于经典，IP适配，简约至上】：你的主要目标是制作一款能让人一眼认出其原型的经典游戏的“IP定制版”。
+                                            4. 【核心玩法不变】：必须最大限度地保留其【核心玩法循环】和基本规则。
+                                            5. 【IP化视觉】：UI界面、色彩搭配、整体视觉风格应参考用户IP图片的风格（如像素风、卡通风等）。
+                                            6. 【“轻”创新】：对核心玩法的轻微修改或与IP主题相关的趣味机制，绝不能让游戏变得复杂或不可识别。
+                                            7. 【简洁实现】：机制简洁，易于理解和直接上手。
 
-                    // Handle existing content (string or array)
-                    if (Array.isArray(userMessage.content)) {
-                        contentForClaude.push(...userMessage.content);
-                    } else if (typeof userMessage.content === 'string') {
-                        contentForClaude.push({ type: 'text', text: userMessage.content });
-                    }
+                                    用户提供的图片会以URL形式包含在消息中。你应直接理解图片内容获取灵感。如图片过于抽象，应主动询问用户的IP关键特征、想表达的感觉或主题。
 
-                    if (imgURL) {
-                        const imageParts = imgURL.match(/^data:(image\/\w+);base64,(.+)$/);
-                        if (imageParts && imageParts.length === 3) {
-                            const imageMediaType = imageParts[1];
-                            const base64ImageData = imageParts[2];
-                            contentForClaude.unshift({
-                                type: "image_url",
-                                image_url: {
-                                    url: `data:${imageMediaType};base64,${base64ImageData}`
-                                }
-                            });
+【交互流程】：
+1. 接收imgURL（必须）和audioURL（可选）。
+2. 引导用户聊想法。
+3. 第一次方案应非常简洁，例如：
+   “好的，我们可以尝试制作一款IP定制版的【经典游戏名称】。您的IP将作为【主角/核心元素】，主要玩法保持原汁原味，视觉风格贴合您的IP。我们可以先基于此生成一个版本。”
+
+4. 提问用户：“您希望我们现在就生成游戏？还是一步步讨论玩法和细节？我可以引导您细化。”
+
+5. 根据选择行动：
+   a. 如果用户选择【直接生成】，或者【详细讨论】后用户表示“OK”或类似意愿确认生成：
+      i.  首先，回复一句自然的确认话语，例如：“好的，我们来生成游戏吧！”或者“明白了，正在为您准备游戏，请稍候...” 这句话会直接显示给用户。
+      ii. 然后，【非常重要：这必须是你当前回复的最后一部分，不要有任何其他文字跟在后面】，紧接着输出一个特殊标记和JSON数据，严格按照以下格式：
+          GENERATION_JSON_PAYLOAD:::{"gameRequest": "游戏类型", "twist": "游戏特性", "requirements": ["要求1", "要求2"]}
+          (注意：请将示例JSON中的描述替换为实际构思好的游戏内容。GENERATION_JSON_PAYLOAD::: 和左花括号 { 之间绝不能有任何空格或换行。)
+   b. 如果用户选择【详细讨论】，你则进入引导式细化设计阶段。继续提问并迭代你的设计方案，直到用户表示满意并确认生成，届时再遵循上面的5.a.i和5.a.ii步骤。
+
+6. 【关键指令】：当AI按上述步骤5.a.ii的格式输出以 GENERATION_JSON_PAYLOAD::: 开头的数据时，客户端程序会自动识别这个标记，提取JSON用于游戏生成，并且【不会向用户显示这个标记和它后面的JSON本身】。所以，你的确认话语（第5.a.i步）就是用户看到的关于生成操作的最后信息。
+
+请以友好、鼓励和激发创意的语气与用户交流。现在开始对话吧！`;
+            
+
+                const messagesForAPI = [{ "role": "system", "content": systemPrompt }];
+                let userMessagesProcessed = 0;
+                const isLastUserMessage = (idx, arr) => arr.filter(m => m.role === 'user').length === idx + 1;
+
+                if (conversation && conversation.length > 0) {
+                    conversation.forEach((msg, index) => {
+                        if (msg.role === 'user') {
+                            const userMessageContent = [];
+                            let originalUserText = '';
+
+                            // Check if msg.content is already the array structure from a previous turn
+                            if (Array.isArray(msg.content)) {
+                                const textBlock = msg.content.find(c => c.type === 'text');
+                                if (textBlock) originalUserText = textBlock.text;
+                                // If it's already structured, and it's the last message, ensure imgURL is current.
+                                // However, it's simpler to reconstruct if it's the last user message needing media.
+                            } else {
+                                originalUserText = msg.content; // It's a simple string
+                            }
+
+                            if (isLastUserMessage(userMessagesProcessed, conversation) && imgURL) {
+                                userMessageContent.push({
+                                    type: "image_url",
+                                    image_url: { url: imgURL }
+                                });
+                            }
+                            // Always add the text part
+                            let textForUser = originalUserText;
+                            if (isLastUserMessage(userMessagesProcessed, conversation) && audioURL) {
+                                // Append audio URL info to the text part if it's the last message
+                                textForUser += `\n[用户提供的音频链接: ${audioURL}]`;
+                            }
+                            userMessageContent.push({ type: "text", text: textForUser });
+                            
+                            messagesForAPI.push({ role: 'user', content: userMessageContent });
+                            userMessagesProcessed++;
                         } else {
-                            console.warn("Invalid imgURL format received:", imgURL);
-                            const textPart = contentForClaude.find(p => p.type === 'text') || { type: 'text', text: '' };
-                            textPart.text += "\n[System Note: User provided an image, but its format was not recognized by the server.]";
-                            if (!contentForClaude.find(p => p.type === 'text')) contentForClaude.push(textPart);
+                            messagesForAPI.push(msg); // Add assistant messages as is
                         }
-                    }
-
+                    });
+                } else if (imgURL) { // Conversation is empty, but we have an image (and maybe audio) - initial prompt
+                    const initialUserContent = [];
+                    initialUserContent.push({
+                        type: "image_url",
+                        image_url: { url: imgURL }
+                    });
+                    let initialText = "你好，这是我提供的素材，请根据这些素材和我聊聊游戏创意吧！";
                     if (audioURL) {
-                        const audioText = `\n[System Note: User also provided an audio URL: ${audioURL}. Remember to advise the user on how to integrate this using HTML5 audio capabilities, as external audio files cannot be directly embedded unless they are data URLs.]`;
-                        let textPart = contentForClaude.find(p => p.type === 'text');
-                        if (textPart) {
-                            textPart.text += audioText;
-                        } else {
-                            contentForClaude.push({ type: 'text', text: audioText.trim() });
-                        }
+                        initialText += `\n[用户提供的音频链接: ${audioURL}]`;
                     }
-                    userMessage.content = contentForClaude.length > 0 ? contentForClaude : "";
-                } else if (imgURL || audioURL) {
-                     console.warn("imgURL or audioURL provided, but no user message in conversation to attach to. Client might need adjustment.");
+                    initialUserContent.push({ type: "text", text: initialText });
+                    messagesForAPI.push({ role: 'user', content: initialUserContent });
                 }
-
 
                 const openRouterPayload = JSON.stringify({
                     model: CLAUDE_MODEL,
-                    messages: messages,
+                    messages: messagesForAPI,
                     stream: true
                 });
 
@@ -318,8 +364,14 @@ const server = http.createServer(async (req, res) => {
             }
         });
     } else {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not Found' }));
+        // If not OPTIONS or POST to /api/chat, send 404 or a more specific error
+        if (req.url !== '/api/chat') { // Only send 404 if the path is wrong
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Not Found' }));
+        } else { // Path is /api/chat but method is not POST or OPTIONS
+            res.writeHead(405, { 'Content-Type': 'application/json' }); // Method Not Allowed
+            res.end(JSON.stringify({ error: `Method ${req.method} not allowed for /api/chat` }));
+        }
     }
 });
 
@@ -330,5 +382,5 @@ server.listen(PORT, () => {
     if (!OPENROUTER_API_KEY) {
         console.warn('Warning: OPENROUTER_API_KEY is not set. API calls will fail.');
     }
-    console.log("Note: Client-side (public/js/chat.js) may need updates to send requests in the format { conversation, imgURL, audioURL } to this endpoint.")
+    console.log("Note: Client-side (public/js/chat.js) may need updates to send requests in the format { conversation, imgURL, audioURL } to this endpoint.");
 }); 

@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mindless Attractor Control Panel</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .status-indicator {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-focused { background-color: green; }
+        .status-distracted { background-color: red; }
+        .attention-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+        .distraction-alert {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px;
+            background-color: #ff4444;
+            color: white;
+            border-radius: 5px;
+            display: none;
+            z-index: 1000;
+        }
+        .video-container {
+            display: flex;
+            gap: 20px;
+        }
+        .video-feed, .webcam-feed {
+            position: relative;
+            width: 640px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>Mindless Attractor</h1>
+        
+        <div id="distractionAlert" class="distraction-alert">
+            注意力分散警告！
+        </div>
+
+        <div class="video-container mt-4">
+            <!-- Video Player -->
+            <div class="video-feed">
+                <h5>视频播放</h5>
+                <video id="videoPlayer" width="640" height="480" controls>
+                    <source id="videoSource" type="video/mp4">
+                </video>
+            </div>
+
+            <!-- Webcam Feed -->
+            <div class="webcam-feed">
+                <h5>注意力监控</h5>
+                <div style="position: relative;">
+                    <img id="webcamFeed" src="{{ url_for('video_feed') }}" width="640" height="480" 
+                         onerror="handleVideoError(this)" style="border: 2px solid #ccc;">
+                    <canvas id="overlayCanvas" class="attention-overlay" width="640" height="480"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-4">
+            <div class="card-body">
+                <h5>控制面板</h5>
+                <input type="file" id="videoInput" accept="video/mp4" class="form-control mb-3">
+                <button class="btn btn-primary" onclick="startSession()">开始监控</button>
+                <button class="btn btn-danger" onclick="stopSession()">停止</button>
+            </div>
+        </div>
+
+        <div class="card mt-4">
+            <div class="card-body">
+                <h5>注意力状态</h5>
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">初始化中...</span>
+                <div id="attentionDetails" class="mt-2">
+                    <p>头部角度: <span id="headPose">-</span></p>
+                    <p>视线方向: <span id="gazeDirection">-</span></p>
+                    <p>眨眼频率: <span id="blinkRate">-</span></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let videoContext = null;
+        let overlayContext = null;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const canvas = document.getElementById('overlayCanvas');
+            overlayContext = canvas.getContext('2d');
+            
+            // 处理视频文件上传
+            document.getElementById('videoInput').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                const videoPlayer = document.getElementById('videoPlayer');
+                videoPlayer.src = URL.createObjectURL(file);
+            });
+        });
+
+        function startSession() {
+            const videoPlayer = document.getElementById('videoPlayer');
+            const webcamFeed = document.getElementById('webcamFeed');
+            
+            // 确保视频源是最新的
+            webcamFeed.src = "{{ url_for('video_feed') }}?" + new Date().getTime();
+            
+            videoPlayer.play();
+            fetch('/api/start', { 
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    connectWebSocket();
+                    document.getElementById('statusText').textContent = '监控已启动';
+                } else {
+                    throw new Error('Failed to start monitoring');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('statusText').textContent = '启动失败';
+            });
+        }
+
+        function stopSession() {
+            const videoPlayer = document.getElementById('videoPlayer');
+            videoPlayer.pause();
+            fetch('/api/stop', { method: 'POST' })
+                .then(response => {
+                    if (response.ok && ws) {
+                        ws.close();
+                    }
+                });
+        }
+
+        function updateStatus(data) {
+            if (!data) return;
+        
+            console.log('Updating status with:', data);
+            
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            const headPoseEl = document.getElementById('headPose');
+            const gazeDirectionEl = document.getElementById('gazeDirection');
+            const blinkRateEl = document.getElementById('blinkRate');
+            
+            // 更新状态指示器
+            indicator.className = 'status-indicator ' + 
+                (data.distracted ? 'status-distracted' : 'status-focused');
+            
+            // 更新状态文本
+            statusText.textContent = data.distracted ? '分心' : '专注';
+            
+            // 安全地更新头部姿态信息
+            if (data.reason && data.reason.head_pose) {
+                const yaw = data.reason.head_pose.yaw;
+                const pitch = data.reason.head_pose.pitch;
+                headPoseEl.textContent = 
+                    `偏航: ${typeof yaw === 'number' ? yaw.toFixed(1) : 'N/A'}°, ` +
+                    `俯仰: ${typeof pitch === 'number' ? pitch.toFixed(1) : 'N/A'}°`;
+            } else {
+                headPoseEl.textContent = '数据不可用';
+            }
+            
+            // 移除视线状态显示
+            gazeDirectionEl.style.display = 'none';
+            
+            // 更新眨眼状态显示为闭眼状态
+            if (data.reason && data.reason.eyes) {
+                const closed = data.reason.eyes.closed;
+                const duration = data.reason.eyes.closed_duration;
+                blinkRateEl.textContent = closed ? 
+                    `闭眼持续: ${duration ? duration.toFixed(1) : 'N/A'}秒` : 
+                    '眼睛正常';
+            } else {
+                blinkRateEl.textContent = '数据不可用';
+            }
+            
+            // 显示分心警告
+            const alert = document.getElementById('distractionAlert');
+            if (data.distracted) {
+                alert.style.display = 'block';
+                alert.textContent = `注意力分散: ${getDistractionReason(data.reason)}`;
+            } else {
+                alert.style.display = 'none';
+            }
+        }
+
+        function drawAttentionOverlay(reason) {
+            overlayContext.clearRect(0, 0, 640, 480);
+            if (reason.gaze_direction) {
+                overlayContext.beginPath();
+                overlayContext.moveTo(reason.gaze_direction.origin.x, reason.gaze_direction.origin.y);
+                overlayContext.lineTo(reason.gaze_direction.target.x, reason.gaze_direction.target.y);
+                overlayContext.strokeStyle = reason.gaze_distracted ? '#ff0000' : '#00ff00';
+                overlayContext.lineWidth = 2;
+                overlayContext.stroke();
+            }
+        }
+
+        function getDistractionReason(reason) {
+            if (!reason) return '未知原因';
+            
+            const reasons = [];
+            if (reason.head_pose) {
+                const yaw = reason.head_pose.yaw;
+                const pitch = reason.head_pose.pitch;
+                if (typeof yaw === 'number' && Math.abs(yaw) > 30) reasons.push('头部左右偏转过大');
+                if (typeof pitch === 'number' && Math.abs(pitch) > 20) reasons.push('头部上下点头过大');
+            }
+            if (reason.eyes && reason.eyes.closed && reason.eyes.closed_duration >= 2.0) {
+                reasons.push('持续闭眼');
+            }
+            
+            return reasons.length > 0 ? reasons.join('，') : '注意力正常';
+        }
+
+        function connectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            
+            console.log('Connecting to Socket.IO...');
+            ws = io(window.location.origin, {
+                transports: ['websocket'],
+                upgrade: false,
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 5,
+                forceNew: true
+            });
+            
+            ws.on('connect', function() {
+                console.log('Socket.IO Connected!');
+                document.getElementById('statusText').textContent = '已连接';
+            });
+            
+            ws.on('disconnect', function() {
+                console.log('Socket.IO Disconnected!');
+                document.getElementById('statusText').textContent = '已断开';
+            });
+            
+            ws.on('attention_status', function(data) {
+                console.log('Received attention status:', data);
+                updateStatus(data);
+            });
+            
+            ws.on('connect_error', function(error) {
+                console.error('Connection Error:', error);
+                document.getElementById('statusText').textContent = '连接错误';
+            });
+
+            ws.on('error', function(error) {
+                console.error('Socket.IO Error:', error);
+            });
+        }
+
+        function handleVideoError(img) {
+            console.error('Video feed error');
+            // 尝试重新加载视频流
+            setTimeout(() => {
+                img.src = "{{ url_for('video_feed') }}?" + new Date().getTime();
+            }, 1000);
+        }
+
+        function setIntervention(type) {
+            fetch('/api/set_intervention', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({type: type})
+            });
+        }
+
+        function startMonitoring() {
+            fetch('/api/start', {
+                method: 'POST'
+            }).then(response => {
+                if (response.ok) {
+                    connectWebSocket();
+                }
+            });
+        }
+
+        function stopMonitoring() {
+            fetch('/api/stop', {
+                method: 'POST'
+            }).then(response => {
+                if (response.ok && ws) {
+                    ws.close();
+                }
+            });
+        }
+
+        // Auto-connect WebSocket when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            connectWebSocket();
+        });
+    </script>
+    <!-- Add Socket.IO client library -->
+    <script src="https://cdn.jsdelivr.net/npm/socket.io@4.7.2/client-dist/socket.io.min.js"></script>
+</body>
+</html>
