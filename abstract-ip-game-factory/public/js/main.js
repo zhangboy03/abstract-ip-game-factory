@@ -65,14 +65,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- File Upload Logic ---
     imageUploadInput.addEventListener('change', async (event) => {
+        console.log('[main.js] Image input \'change\' event fired.'); // DEBUG
+
         const files = event.target.files;
         if (!files || files.length === 0) {
+            console.log('[main.js] No files selected or input cleared.'); // DEBUG
             if (selectedImageFiles.length > 0 && files.length === 0) {
                 clearAllImageFiles();
             }
             return;
         }
 
+        console.log(`[main.js] ${files.length} file(s) selected.`); // DEBUG
         clearAllImageFiles(); 
         selectedImageFiles = Array.from(files);
 
@@ -82,9 +86,16 @@ document.addEventListener('DOMContentLoaded', () => {
             uploadedImageName.textContent = `${selectedImageFiles.length} image(s) selected`;
             uploadedImageName.classList.remove('hidden');
 
+            if (!sendButton) {
+                console.error('[main.js] CRITICAL: sendButton is not found in the DOM!'); // DEBUG
+                showNotification('Error: UI element missing, cannot proceed with upload.', 'error');
+                return;
+            }
             setLoadingState(true, sendButton);
+            console.log('[main.js] setLoadingState(true) called for sendButton.'); // DEBUG
 
             const uploadPromises = selectedImageFiles.map(async (file, index) => {
+                console.log(`[main.js] Processing file ${index + 1}: ${file.name}`); // DEBUG
                 const reader = new FileReader();
                 const previewPromise = new Promise((resolve) => {
                     reader.onload = (e) => {
@@ -101,45 +112,53 @@ document.addEventListener('DOMContentLoaded', () => {
                     reader.readAsDataURL(file);
                 });
                 await previewPromise;
+                console.log(`[main.js] Preview shown for file ${index + 1}:`, file.name); // DEBUG
 
                 const formData = new FormData();
                 formData.append('source', file);
                 try {
+                    console.log(`[main.js] Attempting to upload ${file.name} to /api/upload-image`); // DEBUG
                     const response = await fetch('/api/upload-image', {
                         method: 'POST',
                         body: formData,
                     });
+                    console.log(`[main.js] Fetch response status for ${file.name}:`, response.status); // DEBUG
                     if (response.ok) {
                         const result = await response.json();
+                        console.log(`[main.js] Upload successful for ${file.name}, URL:`, result.imageUrl); // DEBUG
                         return result.imageUrl;
                     } else {
                         const errorResult = await response.json().catch(() => ({ error: 'Failed to parse error from image proxy' }));
+                        console.error(`[main.js] Upload failed for ${file.name}. Status: ${response.status}`, errorResult); // DEBUG
                         showNotification(`Upload failed for ${file.name}: ${errorResult.error || response.statusText}`, 'error');
                         return null; 
                     }
                 } catch (error) {
+                    console.error(`[main.js] Network error during upload for ${file.name}:`, error); // DEBUG
                     showNotification(`Network error during upload for ${file.name}: ${error.message}`, 'error');
                     return null;
                 }
             });
 
             try {
+                console.log('[main.js] Awaiting all upload promises...'); // DEBUG
                 const results = await Promise.all(uploadPromises);
                 currentUploadedImageURLs = results.filter(url => url !== null);
+                console.log('[main.js] All upload promises settled. Successful URLs:', currentUploadedImageURLs); // DEBUG
 
                 if (currentUploadedImageURLs.length === 0 && selectedImageFiles.length > 0) {
                     showNotification('All image uploads failed. Please try again.', 'error');
                     clearAllImageFiles();
                 } else if (currentUploadedImageURLs.length < selectedImageFiles.length) {
                     showNotification('Some images failed to upload. Only successfully uploaded images will be used.', 'info');
-                } else {
-                    console.log('All images uploaded:', currentUploadedImageURLs);
                 }
             } catch (error) {
+                console.error('[main.js] Error in Promise.all for uploads:', error); // DEBUG
                 showNotification('An unexpected error occurred during batch image upload.', 'error');
                 clearAllImageFiles();
             } finally {
                 setLoadingState(false, sendButton);
+                console.log('[main.js] setLoadingState(false) called for sendButton.'); // DEBUG
                 if (currentUploadedImageURLs.length === 0) {
                     imagePreviewContainer.classList.add('hidden');
                     imagePreviewContainer.classList.remove('flex');
