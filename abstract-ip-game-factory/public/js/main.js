@@ -906,11 +906,11 @@ document.addEventListener('DOMContentLoaded', () => {
         currentGameSessionId = null; // Crucial: New game means no active session ID
 
         const initialGreetingParts = [
-            "Want to turn your boss into a brick in Breakout? Your partner into the head of a pixelated snake? Or your cat into the hero of a wacky adventure?",
-            "Upload a picture — whether it's your boss, friend, partner, pet, or a totally abstract meme — and add a sound they might make.",
-            "Then tell us: what kind of game do you want to play? Something silly? Stress-relieving? Weirdly romantic?",
-            "We'll remix a classic game to match your idea — and your character becomes the star.",
-            "Need some inspiration? How about:\n- A 'Whack-a-Boss' game?\n- A 'Pixel Hopper' adventure starring your partner or pet?\n- Your own version of 'Brick Breaker' or 'Snake' featuring your unique IP?\nOr suggest any classic game you love!"
+            "Welcome to memeAIgame!",
+            "1. Upload a picture (your Boss's face, a pet, a meme - anything!) and optionally an audio clip.",
+            "2. Tell me what game you want to remake (e.g., 'Snake', 'Breakout', 'a platformer like Mario').",
+            "3. Suggest a fun 'twist' or unique idea for your game.",
+            "Let's create your game! What are we making today?"
         ];
         
         initialGreetingParts.forEach(part => {
