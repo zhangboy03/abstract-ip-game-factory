@@ -87,12 +87,13 @@ document.addEventListener('DOMContentLoaded', () => {
             uploadedImageName.classList.remove('hidden');
 
             if (!sendButton) {
-                console.error('[main.js] CRITICAL: sendButton is not found in the DOM!'); // DEBUG
+                console.error('[main.js] CRITICAL: sendButton is not found in the DOM!'); 
                 showNotification('Error: UI element missing, cannot proceed with upload.', 'error');
                 return;
             }
+            console.log('[main.js] About to call setLoadingState(true). sendButton type:', typeof sendButton, 'sendButton:', sendButton); // DEBUG
             setLoadingState(true, sendButton);
-            console.log('[main.js] setLoadingState(true) called for sendButton.'); // DEBUG
+            console.log('[main.js] setLoadingState(true) called for sendButton. sendButton.disabled should be true:', sendButton.disabled); // DEBUG
 
             const uploadPromises = selectedImageFiles.map(async (file, index) => {
                 console.log(`[main.js] Processing file ${index + 1}: ${file.name}`); // DEBUG
