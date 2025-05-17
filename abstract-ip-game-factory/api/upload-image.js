@@ -1,11 +1,8 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env.local') });
 const formidable = require('formidable');
 const fs = require('fs');
-const fetch = require('node-fetch'); // Use node-fetch v2 for CommonJS
-const FormData = require('form-data'); // Use require for form-data
-
-const PICGO_API_KEY = process.env.PICGO_API_KEY;
-const PICGO_UPLOAD_URL = 'https://www.picgo.net/api/1/upload'; // Make sure this is correct
+const { put } = require('@vercel/blob');
+const path = require('path'); // Required for originalname
 
 module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*'); // Restrict later
@@ -18,78 +15,63 @@ module.exports = async (req, res) => {
     }
 
     if (req.method === 'POST') {
-        if (!PICGO_API_KEY) {
-            console.error('PICGO_API_KEY is not set in environment variables.');
-            res.status(500).json({ error: 'Server configuration error: Missing upload API key.' });
+        if (!process.env.BLOB_READ_WRITE_TOKEN) {
+            console.error('BLOB_READ_WRITE_TOKEN is not set in environment variables.');
+            res.status(500).json({ error: 'Server configuration error: Missing upload API token.' });
             return;
         }
 
-        // formidable needs the raw req object to parse form data.
-        // Vercel provides this req object.
-        const form = new formidable.IncomingForm({ 
+        const form = new formidable.IncomingForm({
             keepExtensions: true,
-            uploadDir: '/tmp' // Explicitly use /tmp for Vercel's temporary storage
+            uploadDir: '/tmp' // Vercel's temporary directory
         });
 
         form.parse(req, async (err, fields, files) => {
             if (err) {
-                console.error('Error parsing form data:', err);
-                res.status(500).json({ error: 'Error processing upload.', details: err.message });
+                console.error('Error parsing form data for image:', err);
+                res.status(500).json({ error: 'Error processing image upload.', details: err.message });
                 return;
             }
 
-            const imageFile = files.source; 
+            const imageFile = files.source;
 
             if (!imageFile || !imageFile[0]) {
                 res.status(400).json({ error: "No image file provided in 'source' field." });
                 return;
             }
-            
+
             const uploadedFile = imageFile[0];
-            const tempFilePath = uploadedFile.filepath; // Path to the file in /tmp
+            const tempFilePath = uploadedFile.filepath;
+            const originalFileName = uploadedFile.originalFilename || 'uploaded-image';
 
-            const picGoFormData = new FormData();
-            const fileStream = fs.createReadStream(tempFilePath);
-            const fileName = uploadedFile.originalFilename;
-            picGoFormData.append('source', fileStream, fileName); 
-            picGoFormData.append('format', 'txt');
-
-            console.log(`[Proxy] Uploading ${uploadedFile.originalFilename} (from ${tempFilePath}) to PicGo...`);
+            console.log(`[VercelBlob] Uploading ${originalFileName} (from ${tempFilePath}) to Vercel Blob...`);
 
             try {
-                const picGoResponse = await fetch(PICGO_UPLOAD_URL, {
-                    method: 'POST',
-                    headers: {
-                        'X-API-Key': PICGO_API_KEY,
-                        ...picGoFormData.getHeaders()
-                    },
-                    body: picGoFormData
+                const fileBuffer = fs.readFileSync(tempFilePath);
+                // Construct a unique pathname, e.g., images/original-filename-timestamp.ext
+                const fileExtension = path.extname(originalFileName);
+                const baseFileName = path.basename(originalFileName, fileExtension);
+                const blobPathname = `images/${baseFileName}-${Date.now()}${fileExtension}`;
+
+                const blob = await put(blobPathname, fileBuffer, {
+                    access: 'public',
+                    token: process.env.BLOB_READ_WRITE_TOKEN
                 });
 
-                const responseBodyText = await picGoResponse.text();
+                console.log('[VercelBlob] Upload successful. URL:', blob.url);
+                res.status(200).json({ imageUrl: blob.url });
 
-                if (picGoResponse.ok) {
-                    if (responseBodyText && (responseBodyText.startsWith('http://') || responseBodyText.startsWith('https://'))) {
-                        console.log('[Proxy] PicGo upload successful. URL:', responseBodyText);
-                        res.status(200).json({ imageUrl: responseBodyText.trim() });
-                    } else {
-                        console.error('[Proxy] PicGo returned OK status but unexpected body:', responseBodyText);
-                        res.status(500).json({ error: 'Image hosting service returned unexpected response.', details: responseBodyText });
-                    }
-                } else {
-                    console.error('[Proxy] PicGo API Error:', picGoResponse.status, responseBodyText);
-                    res.status(picGoResponse.status || 500).json({ error: 'Image hosting service returned an error.', details: responseBodyText });
-                }
-            } catch (fetchError) {
-                console.error('[Proxy] Error fetching PicGo API:', fetchError);
-                res.status(500).json({ error: 'Failed to connect to image hosting service.', details: fetchError.message });
+            } catch (uploadError) {
+                console.error('[VercelBlob] Error uploading to Vercel Blob:', uploadError);
+                res.status(500).json({ error: 'Failed to upload image to hosting service.', details: uploadError.message });
             } finally {
-                 fs.unlink(tempFilePath, unlinkErr => {
-                    if (unlinkErr) console.error("Error deleting tmp file:", tempFilePath, unlinkErr);
-                    else console.log("Successfully deleted tmp file:", tempFilePath);
-                 });
+                fs.unlink(tempFilePath, unlinkErr => {
+                    if (unlinkErr) console.error("Error deleting tmp image file:", tempFilePath, unlinkErr);
+                    else console.log("Successfully deleted tmp image file:", tempFilePath);
+                });
             }
         });
+
     } else {
         res.setHeader('Allow', ['POST', 'OPTIONS']);
         res.status(405).json({ error: `Method ${req.method} not allowed.` });

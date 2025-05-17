@@ -1,20 +1,11 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env.local') });
 const formidable = require('formidable');
 const fs = require('fs');
-const { v2: cloudinary } = require('cloudinary');
+const { put } = require('@vercel/blob');
+const path = require('path'); // Required for originalname
 
-// Configure Cloudinary - this should be done once, ideally not inside the handler if it can be top-level.
-// However, process.env might not be populated during Vercel's global scope initialization for all vars in some cases,
-// so keeping it here for now, but it will re-run config on every invocation. Safe, but slightly less optimal.
-// A better pattern is to ensure config is called once, e.g. in a separate config file or a top-level IIFE.
-if (!cloudinary.config().cloud_name) { // Configure only if not already configured
-    cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET,
-        secure: true
-    });
-}
+// Remove Cloudinary configuration as it's no longer needed
+// if (!cloudinary.config().cloud_name) { ... }
 
 module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*'); // Restrict later
@@ -27,40 +18,15 @@ module.exports = async (req, res) => {
     }
 
     if (req.method === 'POST') {
-        // Re-check Cloudinary config at invocation time to ensure env vars are loaded
-        if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
-            console.error('Cloudinary credentials are not fully set in environment variables.');
-            // Ensure Cloudinary is configured with whatever is available, or it might throw during form.parse if used before this check
-            if (!cloudinary.config().cloud_name) {
-                 try {
-                    cloudinary.config({
-                        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-                        api_key: process.env.CLOUDINARY_API_KEY,
-                        api_secret: process.env.CLOUDINARY_API_SECRET,
-                        secure: true
-                    });
-                 } catch (configError) {
-                    console.error("Error trying to re-init cloudinary config on missing env vars:", configError);
-                 }
-            }
-            res.status(500).json({ error: 'Server configuration error: Missing audio upload service credentials.' });
+        if (!process.env.BLOB_READ_WRITE_TOKEN) {
+            console.error('BLOB_READ_WRITE_TOKEN is not set in environment variables.');
+            res.status(500).json({ error: 'Server configuration error: Missing upload API token.' });
             return;
         }
-        
-        // Ensure cloudinary is configured before parsing form data that might use it
-        // (redundant if top-level config worked, but safe)
-        if (!cloudinary.config().cloud_name) {
-            cloudinary.config({
-                cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-                api_key: process.env.CLOUDINARY_API_KEY,
-                api_secret: process.env.CLOUDINARY_API_SECRET,
-                secure: true
-            });
-        }
 
-        const form = new formidable.IncomingForm({ 
+        const form = new formidable.IncomingForm({
             keepExtensions: true,
-            uploadDir: '/tmp' // Use Vercel's temporary directory
+            uploadDir: '/tmp' // Vercel's temporary directory
         });
 
         form.parse(req, async (err, fields, files) => {
@@ -70,7 +36,7 @@ module.exports = async (req, res) => {
                 return;
             }
 
-            const audioFile = files.audio; 
+            const audioFile = files.audio;
 
             if (!audioFile || !audioFile[0]) {
                 res.status(400).json({ error: "No audio file provided in 'audio' field." });
@@ -79,29 +45,29 @@ module.exports = async (req, res) => {
 
             const uploadedFile = audioFile[0];
             const tempFilePath = uploadedFile.filepath;
+            const originalFileName = uploadedFile.originalFilename || 'uploaded-audio';
 
-            console.log(`[AudioProxy] Uploading ${uploadedFile.originalFilename} (from ${tempFilePath}) to Cloudinary...`);
+            console.log(`[VercelBlob] Uploading ${originalFileName} (from ${tempFilePath}) to Vercel Blob...`);
 
             try {
-                const uploadResult = await cloudinary.uploader.upload(tempFilePath, {
-                    resource_type: 'video', 
-                    public_id: uploadedFile.originalFilename.split('.').slice(0, -1).join('_') 
+                const fileBuffer = fs.readFileSync(tempFilePath);
+                // Construct a unique pathname, e.g., audio/original-filename-timestamp.ext
+                const fileExtension = path.extname(originalFileName);
+                const baseFileName = path.basename(originalFileName, fileExtension);
+                const blobPathname = `audio/${baseFileName}-${Date.now()}${fileExtension}`;
+
+                const blob = await put(blobPathname, fileBuffer, {
+                    access: 'public',
+                    contentType: uploadedFile.mimetype, // Pass the mimetype for audio files
+                    token: process.env.BLOB_READ_WRITE_TOKEN
                 });
-                
-                console.log('[AudioProxy] Cloudinary upload successful. URL:', uploadResult.secure_url);
-                res.status(200).json({ audioUrl: uploadResult.secure_url });
+
+                console.log('[VercelBlob] Audio upload successful. URL:', blob.url);
+                res.status(200).json({ audioUrl: blob.url });
 
             } catch (uploadError) {
-                console.error('[AudioProxy] Error uploading to Cloudinary:', uploadError);
-                let errorDetails = 'Unknown error during Cloudinary upload.';
-                if (uploadError instanceof Error) {
-                    errorDetails = uploadError.message;
-                } else if (typeof uploadError === 'string') {
-                    errorDetails = uploadError;
-                } else if (uploadError && typeof uploadError.message === 'string'){
-                    errorDetails = uploadError.message;
-                }
-                res.status(500).json({ error: 'Failed to upload audio to hosting service.', details: errorDetails });
+                console.error('[VercelBlob] Error uploading audio to Vercel Blob:', uploadError);
+                res.status(500).json({ error: 'Failed to upload audio to hosting service.', details: uploadError.message });
             } finally {
                 fs.unlink(tempFilePath, unlinkErr => {
                     if (unlinkErr) console.error("Error deleting tmp audio file:", tempFilePath, unlinkErr);
