@@ -159,12 +159,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 clearAllImageFiles();
             } finally {
                 setLoadingState(false, sendButton);
-                console.log('[main.js] setLoadingState(false) called for sendButton.'); // DEBUG
-                if (currentUploadedImageURLs.length === 0) {
+                console.log('[main.js] setLoadingState(false) called for sendButton. sendButton.disabled should be false:', sendButton.disabled); // DEBUG
+                if (currentUploadedImageURLs.length === 0 && selectedImageFiles.length > 0) { // Check if all uploads failed for the current selection
                     imagePreviewContainer.classList.add('hidden');
                     imagePreviewContainer.classList.remove('flex');
                     uploadedImageName.classList.add('hidden');
+                    // Potentially clear thumbnails here if all failed for this specific batch
+                    // imageThumbnailsArea.innerHTML = ''; 
+                } else if (currentUploadedImageURLs.length === 0 && selectedImageFiles.length === 0) { // If selection was cleared or no files
+                     imagePreviewContainer.classList.add('hidden');
+                     imagePreviewContainer.classList.remove('flex');
+                     uploadedImageName.classList.add('hidden');
                 }
+                imageUploadInput.value = ''; // << MOVED TO HERE
             }
         }
     });
@@ -222,7 +229,6 @@ document.addEventListener('DOMContentLoaded', () => {
         uploadedImageName.classList.add('hidden');
         imagePreviewContainer.classList.add('hidden');
         imagePreviewContainer.classList.remove('flex');
-        imageUploadInput.value = '';
         selectedImageFiles = [];
         currentUploadedImageURLs = [];
     }
