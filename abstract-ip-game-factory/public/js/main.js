@@ -13,12 +13,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Right Main Content - Input Area (File Previews)
     const filePreviewArea = document.getElementById('filePreviewArea');
     const imagePreviewContainer = document.getElementById('imagePreviewContainer');
-    const uploadedImagePreview = document.getElementById('uploadedImagePreview');
+    const imageThumbnailsArea = document.getElementById('imageThumbnailsArea');
     const uploadedImageName = document.getElementById('uploadedImageName');
-    const removeImageButton = document.getElementById('removeImageButton');
+    const removeAllImagesButton = document.getElementById('removeAllImagesButton');
 
     const audioPreviewContainer = document.getElementById('audioPreviewContainer');
-    // const uploadedAudioPreviewIcon = document.getElementById('uploadedAudioPreviewIcon'); // No specific ID for SVG, can be targeted if needed
     const uploadedAudioName = document.getElementById('uploadedAudioName');
     const removeAudioButton = document.getElementById('removeAudioButton');
 
@@ -37,11 +36,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const shareGameButton = document.getElementById('shareGameButton');
 
     // --- State Variables ---
-    let currentUploadedImageURL = null;
+    let currentUploadedImageURLs = [];
     let currentUploadedAudioURL = null;
-    let selectedImageFile = null;
+    let selectedImageFiles = [];
     let selectedAudioFile = null;
-    let currentGameSessionId = null; // ID of the game being actively iterated/viewed
+    let currentGameSessionId = null;
 
     // --- Utility Functions (will be expanded) ---
     function showNotification(message, type = 'info', duration = 3000) {
@@ -66,50 +65,87 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- File Upload Logic ---
     imageUploadInput.addEventListener('change', async (event) => {
-        selectedImageFile = event.target.files[0];
-        if (selectedImageFile) {
-            // Show local preview
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                uploadedImagePreview.src = e.target.result;
-                uploadedImageName.textContent = selectedImageFile.name;
-                imagePreviewContainer.classList.remove('hidden');
-                imagePreviewContainer.classList.add('flex');
-            };
-            reader.readAsDataURL(selectedImageFile);
+        const files = event.target.files;
+        if (!files || files.length === 0) {
+            if (selectedImageFiles.length > 0 && files.length === 0) {
+                clearAllImageFiles();
+            }
+            return;
+        }
 
-            // Attempt to upload immediately
-            const formData = new FormData();
-            formData.append('source', selectedImageFile);
-            
-            setLoadingState(true, sendButton); // Visually indicate activity on main send button
-            // Potentially disable image/audio upload buttons too, or show specific loader
+        clearAllImageFiles(); 
+        selectedImageFiles = Array.from(files);
+
+        if (selectedImageFiles.length > 0) {
+            imagePreviewContainer.classList.remove('hidden');
+            imagePreviewContainer.classList.add('flex');
+            uploadedImageName.textContent = `${selectedImageFiles.length} image(s) selected`;
+            uploadedImageName.classList.remove('hidden');
+
+            setLoadingState(true, sendButton);
+
+            const uploadPromises = selectedImageFiles.map(async (file, index) => {
+                const reader = new FileReader();
+                const previewPromise = new Promise((resolve) => {
+                    reader.onload = (e) => {
+                        const thumbDiv = document.createElement('div');
+                        thumbDiv.className = 'relative group w-10 h-10';
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.alt = `Preview ${index + 1}`;
+                        img.className = 'h-full w-full object-cover rounded border border-gray-300';
+                        thumbDiv.appendChild(img);
+                        imageThumbnailsArea.appendChild(thumbDiv);
+                        resolve();
+                    };
+                    reader.readAsDataURL(file);
+                });
+                await previewPromise;
+
+                const formData = new FormData();
+                formData.append('source', file);
+                try {
+                    const response = await fetch('/api/upload-image', {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    if (response.ok) {
+                        const result = await response.json();
+                        return result.imageUrl;
+                    } else {
+                        const errorResult = await response.json().catch(() => ({ error: 'Failed to parse error from image proxy' }));
+                        showNotification(`Upload failed for ${file.name}: ${errorResult.error || response.statusText}`, 'error');
+                        return null; 
+                    }
+                } catch (error) {
+                    showNotification(`Network error during upload for ${file.name}: ${error.message}`, 'error');
+                    return null;
+                }
+            });
 
             try {
-                const response = await fetch('/api/upload-image', {
-                    method: 'POST',
-                    body: formData,
-                });
-                if (response.ok) {
-                    const result = await response.json();
-                    currentUploadedImageURL = result.imageUrl;
-                    console.log('Image uploaded:', currentUploadedImageURL);
-                    // No alert for success, preview is enough
+                const results = await Promise.all(uploadPromises);
+                currentUploadedImageURLs = results.filter(url => url !== null);
+
+                if (currentUploadedImageURLs.length === 0 && selectedImageFiles.length > 0) {
+                    showNotification('All image uploads failed. Please try again.', 'error');
+                    clearAllImageFiles();
+                } else if (currentUploadedImageURLs.length < selectedImageFiles.length) {
+                    showNotification('Some images failed to upload. Only successfully uploaded images will be used.', 'info');
                 } else {
-                    const errorResult = await response.json().catch(() => ({ error: 'Failed to parse error from image proxy' }));
-                    showNotification(`Image upload failed: ${errorResult.error || response.statusText}`, 'error');
-                    currentUploadedImageURL = null;
-                    removeImageFile(); // Clear preview if upload failed
+                    console.log('All images uploaded:', currentUploadedImageURLs);
                 }
             } catch (error) {
-                showNotification(`Network error during image upload: ${error.message}`, 'error');
-                currentUploadedImageURL = null;
-                removeImageFile();
+                showNotification('An unexpected error occurred during batch image upload.', 'error');
+                clearAllImageFiles();
             } finally {
                 setLoadingState(false, sendButton);
+                if (currentUploadedImageURLs.length === 0) {
+                    imagePreviewContainer.classList.add('hidden');
+                    imagePreviewContainer.classList.remove('flex');
+                    uploadedImageName.classList.add('hidden');
+                }
             }
-        } else {
-            removeImageFile();
         }
     });
 
@@ -160,26 +196,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    function removeImageFile() {
-        uploadedImagePreview.src = '#';
+    function clearAllImageFiles() {
+        imageThumbnailsArea.innerHTML = '';
         uploadedImageName.textContent = '';
+        uploadedImageName.classList.add('hidden');
         imagePreviewContainer.classList.add('hidden');
         imagePreviewContainer.classList.remove('flex');
-        imageUploadInput.value = ''; // Clear the file input
-        selectedImageFile = null;
-        currentUploadedImageURL = null;
+        imageUploadInput.value = '';
+        selectedImageFiles = [];
+        currentUploadedImageURLs = [];
     }
 
     function removeAudioFile() {
         uploadedAudioName.textContent = '';
         audioPreviewContainer.classList.add('hidden');
         audioPreviewContainer.classList.remove('flex');
-        audioUploadInput.value = ''; // Clear the file input
+        audioUploadInput.value = '';
         selectedAudioFile = null;
         currentUploadedAudioURL = null;
     }
 
-    removeImageButton.addEventListener('click', removeImageFile);
+    removeAllImagesButton.addEventListener('click', clearAllImageFiles);
     removeAudioButton.addEventListener('click', removeAudioFile);
 
     // --- Chat Logic (to be implemented) ---
@@ -214,8 +251,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const userInput = chatInput.value.trim();
         if (!userInput) return;
 
-        if (!currentUploadedImageURL) {
-            showNotification('Please upload an image first to start the chat.', 'error');
+        if (currentUploadedImageURLs.length === 0) {
+            showNotification('Please upload at least one image first to start the chat.', 'error');
             return;
         }
 
@@ -228,14 +265,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     async function sendConversationToAPI() {
-        if (!currentUploadedImageURL) {
-            appendMessage('System: Cannot send message. Image is missing.', 'system');
+        if (currentUploadedImageURLs.length === 0) {
+            appendMessage('System: Cannot send message. Image(s) are missing.', 'system');
             return;
         }
 
         const payload = {
             conversation: conversationHistory,
-            imgURL: currentUploadedImageURL,
+            imgURLs: currentUploadedImageURLs,
             audioURL: currentUploadedAudioURL 
         };
         
@@ -345,7 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                                         conversationHistory.push({ role: 'assistant', content: historyContent });
                                                      }
                                                 }
-                                                await callGenerateApiAndDisplayGame(parsedHandshake); // Adapted function name
+                                                await callGenerateApiAndDisplayGame(parsedHandshake);
                                                 return; 
                                             }
                                         } catch (e) {
@@ -413,7 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="fake-progress-bar-container">
                         <div id="gameProgress" class="fake-progress-bar"></div>
                     </div>
-                    <h3 style="font-size: 1.2em; margin-bottom: 10px; color: #1f2937;">Crafting Your Game!</h3>
+                    <h3 style="font-size: 1.2em; margin-bottom: 10px; color: #1f2937;">Crafting Your memeAIgame!</h3>
                     <p style="font-size: 0.9em; color: #4b5563; text-align:center;">The AI is working its magic on "${gameParams.gameRequest}"<br>with the twist: "${gameParams.twist}".</p>
                     <p style="font-size: 0.8em; color: #6b7280; margin-top:10px;">This can take a moment, please wait...</p>
                 </div>
@@ -447,7 +484,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (shareGameButton) shareGameButton.classList.add('hidden');
 
         try {
-            console.log("Calling /api/generate with:", gameParams, "Img:", currentUploadedImageURL, "Audio:", currentUploadedAudioURL);
+            console.log("Calling /api/generate with:", gameParams, "Img URLs:", currentUploadedImageURLs, "Audio:", currentUploadedAudioURL);
             const response = await fetch('/api/generate', {
                 method: 'POST',
                 headers: {
@@ -457,7 +494,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     gameRequest: gameParams.gameRequest,
                     twist: gameParams.twist,
                     requirements: gameParams.requirements,
-                    imgURL: currentUploadedImageURL,
+                    imgURLs: currentUploadedImageURLs,
                     audioURL: currentUploadedAudioURL
                 })
             });
@@ -480,7 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <h3 style="font-size: 1.2em; margin-bottom: 10px;">Oops! Game Generation Failed</h3>
                             <p style="font-size: 0.9em; margin-bottom:5px;">The AI encountered an issue while trying to create your game.</p>
                             <p style="font-size: 0.8em; color: #7f1d1d; background-color: #fee2e2; padding: 5px 10px; border-radius: 4px; display: inline-block; max-width: 90%; overflow-wrap: break-word;">Error: ${errorMessage}</p>
-                            <p style="font-size: 0.8em; margin-top:15px;">You can try again, perhaps with a different classic game or a new twist!</p>
+                            <p style="font-size: 0.8em; margin-top:15px;">You can try again, perhaps with a different classic game or a new twist! (memeAIgame)</p>
                         </div>
                     `;
                 }
@@ -499,7 +536,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; font-family:sans-serif; color:#c0392b; background-color:#fef2f2; padding: 20px; box-sizing: border-box; text-align: center;">
                             <h3 style="font-size: 1.2em; margin-bottom: 10px;">Oops! Invalid Response</h3>
                             <p style="font-size: 0.9em; margin-bottom:5px;">The AI responded, but the game data was not in the expected format.</p>
-                             <p style="font-size: 0.8em; color: #7f1d1d; background-color: #fee2e2; padding: 5px 10px; border-radius: 4px; display: inline-block; max-width: 90%; overflow-wrap: break-word;">Details: Could not parse game data.</p>
+                             <p style="font-size: 0.8em; color: #7f1d1d; background-color: #fee2e2; padding: 5px 10px; border-radius: 4px; display: inline-block; max-width: 90%; overflow-wrap: break-word;">Details: Could not parse game data from memeAIgame.</p>
                             <p style="font-size: 0.8em; margin-top:15px;">Please try generating the game again.</p>
                         </div>
                     `;
@@ -527,8 +564,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 shareGameButton.classList.remove('hidden');
                 
                 const gameDataForStorage = {
-                    imgURL: currentUploadedImageURL,
-                    imageName: selectedImageFile ? selectedImageFile.name : (currentUploadedImageURL ? 'Uploaded Image' : null),
+                    imgURLs: currentUploadedImageURLs,
+                    imageName: selectedImageFiles.length > 0 ? `${selectedImageFiles.length} image(s)` : (currentUploadedImageURLs.length > 0 ? `${currentUploadedImageURLs.length} uploaded image(s)` : null),
                     audioURL: currentUploadedAudioURL,
                     audioName: selectedAudioFile ? selectedAudioFile.name : (currentUploadedAudioURL ? 'Uploaded Audio' : null),
                     gameParams: gameParams, 
@@ -576,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     gameFrame.srcdoc = `
                         <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; font-family:sans-serif; color:#c0392b; background-color:#fef2f2; padding: 20px; box-sizing: border-box; text-align: center;">
                             <h3 style="font-size: 1.2em; margin-bottom: 10px;">Oops! Generation Incomplete</h3>
-                            <p style="font-size: 0.9em; margin-bottom:5px;">The AI responded, but the game code seems to be missing.</p>
+                            <p style="font-size: 0.9em; margin-bottom:5px;">The AI responded, but the game code seems to be missing from memeAIgame.</p>
                             <p style="font-size: 0.8em; margin-top:15px;">Please try generating the game again.</p>
                         </div>
                     `;
@@ -592,7 +629,7 @@ document.addEventListener('DOMContentLoaded', () => {
                  gameFrame.srcdoc = `
                     <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; font-family:sans-serif; color:#c0392b; background-color:#fef2f2; padding: 20px; box-sizing: border-box; text-align: center;">
                         <h3 style="font-size: 1.2em; margin-bottom: 10px;">An Error Occurred</h3>
-                        <p style="font-size: 0.9em; margin-bottom:5px;">Could not generate the game due to a client-side or network issue.</p>
+                        <p style="font-size: 0.9em; margin-bottom:5px;">Could not generate the game due to a client-side or network issue (memeAIgame).</p>
                         <p style="font-size: 0.8em; color: #7f1d1d; background-color: #fee2e2; padding: 5px 10px; border-radius: 4px; display: inline-block;">Details: ${error.message}</p>
                         <p style="font-size: 0.8em; margin-top:15px;">Please check your connection and try again.</p>
                     </div>
@@ -634,7 +671,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function getGameHistory() {
-        const history = localStorage.getItem('gameFactoryHistory');
+        const history = localStorage.getItem('memeAIgameHistory');
         return history ? JSON.parse(history) : [];
     }
 
@@ -646,7 +683,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (history.length > MAX_HISTORY_ITEMS) {
             history = history.slice(0, MAX_HISTORY_ITEMS);
         }
-        localStorage.setItem('gameFactoryHistory', JSON.stringify(history));
+        localStorage.setItem('memeAIgameHistory', JSON.stringify(history));
         renderGameHistoryList(); // Update the displayed list
     }
 
@@ -661,7 +698,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ...originalGame, // Keeps id, title, and any other old fields not in updatedContents
                 ...updatedContents // Overwrites with new gameHTML, gameParams, conversationHistory, etc.
             };
-            localStorage.setItem('gameFactoryHistory', JSON.stringify(history));
+            localStorage.setItem('memeAIgameHistory', JSON.stringify(history));
             renderGameHistoryList(); // Re-render to reflect potential (though maybe not visible if title same)
             showNotification(`Game "${originalGame.title}" updated.`, 'info');
         } else {
@@ -715,7 +752,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function deleteGameFromHistory(gameIdToDelete) {
         let history = getGameHistory();
         history = history.filter(game => game.id !== gameIdToDelete);
-        localStorage.setItem('gameFactoryHistory', JSON.stringify(history));
+        localStorage.setItem('memeAIgameHistory', JSON.stringify(history));
         renderGameHistoryList(); // Re-render the list
 
         // Optional: Check if the deleted game was the currently loaded one
@@ -742,23 +779,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 1. Reset current chat UI and state (similar to initializeChat but without clearing history list itself)
         chatMessagesContainer.innerHTML = '';
-        removeImageFile(); 
+        clearAllImageFiles();
         removeAudioFile();
         
         // Set the active game session ID
         currentGameSessionId = gameData.id;
 
         // 2. Restore game assets
-        currentUploadedImageURL = gameData.imgURL || null;
+        currentUploadedImageURLs = gameData.imgURLs || [];
         currentUploadedAudioURL = gameData.audioURL || null;
         lastGeneratedGameHTML = gameData.gameHTML || null;
 
         // 3. Update UI for assets
-        if (currentUploadedImageURL) {
-            uploadedImagePreview.src = currentUploadedImageURL; // Assuming direct URL, no local File object to re-read
-            uploadedImageName.textContent = gameData.imageName || 'Saved Image';
+        if (currentUploadedImageURLs.length > 0) {
             imagePreviewContainer.classList.remove('hidden');
             imagePreviewContainer.classList.add('flex');
+            uploadedImageName.textContent = gameData.imageName || `${currentUploadedImageURLs.length} image(s)`;
+            uploadedImageName.classList.remove('hidden');
+
+            currentUploadedImageURLs.forEach((url, index) => {
+                const thumbDiv = document.createElement('div');
+                thumbDiv.className = 'relative group w-10 h-10';
+                const img = document.createElement('img');
+                img.src = url;
+                img.alt = `Preview ${index + 1}`;
+                img.className = 'h-full w-full object-cover rounded border border-gray-300';
+                thumbDiv.appendChild(img);
+                imageThumbnailsArea.appendChild(thumbDiv);
+            });
         }
         if (currentUploadedAudioURL) {
             uploadedAudioName.textContent = gameData.audioName || 'Saved Audio'; 
@@ -772,7 +820,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fullscreenPlayButton.classList.remove('hidden');
             shareGameButton.classList.remove('hidden');
         } else {
-            gameFrame.srcdoc = "<div class='flex items-center justify-center h-full text-gray-500'>No game HTML found for this history item.</div>";
+            gameFrame.srcdoc = "<div class='flex items-center justify-center h-full text-gray-500'>No game HTML found for this memeAIgame history item.</div>";
             fullscreenPlayButton.classList.add('hidden');
             shareGameButton.classList.add('hidden');
         }
@@ -799,7 +847,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 
         // 6. Update title
-        currentGameTitle.textContent = gameData.title || 'Restored Game Session';
+        currentGameTitle.textContent = gameData.title || 'Restored memeAIgame Session';
 
         // 7. Ready for further interaction
         chatInput.value = '';
@@ -816,14 +864,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Clear existing messages
         chatMessagesContainer.innerHTML = ''; 
         // Clear previous file selections and URLs
-        removeImageFile();
+        clearAllImageFiles();
         removeAudioFile();
         // Clear game preview and hide download button
-        gameFrame.srcdoc = "<div class='flex items-center justify-center h-full text-gray-500'>Your game preview will appear here once generated.</div>";
+        gameFrame.srcdoc = "<div class='flex items-center justify-center h-full text-gray-500'>Your memeAIgame preview will appear here once generated.</div>";
         fullscreenPlayButton.classList.add('hidden');
         shareGameButton.classList.add('hidden');
         
-        currentGameTitle.textContent = 'New Game Session'; // Reset title
+        currentGameTitle.textContent = 'New memeAIgame Session'; // Reset title
         conversationHistory = []; // Reset history for this session
         currentGameSessionId = null; // Crucial: New game means no active session ID
 

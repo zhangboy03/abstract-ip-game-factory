@@ -178,24 +178,30 @@ module.exports = async (req, res) => {
         req.on('end', async () => {
             console.log('[CHAT_API_LOG] Request body fully received. Body:', requestBody.substring(0, 200) + (requestBody.length > 200 ? '...' : ''));
             try {
-                const { conversation, imgURL, audioURL } = JSON.parse(requestBody);
-                console.log('[CHAT_API_LOG] Request body parsed. Conversation length:', conversation ? conversation.length : 'N/A', 'imgURL present:', !!imgURL, 'audioURL present:', !!audioURL);
+                const { conversation, imgURLs, audioURL } = JSON.parse(requestBody);
+                console.log('[CHAT_API_LOG] Request body parsed. Conversation length:', conversation ? conversation.length : 'N/A', 'imgURLs present:', !!(imgURLs && imgURLs.length > 0), 'audioURL present:', !!audioURL);
 
                 // System prompt tailored for Claude, assuming image URL is passed in message content
-                const systemPrompt = `你是一位富有创造力且技术精湛的HTML5游戏开发专家和游戏设计师。你的核心任务是与用户交流，帮助他们将一个【用户提供的抽象IP】（图片会以URL的形式通过消息中的 image_url 字段提供，可选的audioURL提供的音频也会在文本中注明）融入一款经典游戏的魔改版。
+                const systemPrompt = `你是一位富有创造力且技术精湛的HTML5游戏开发专家和游戏设计师。你的核心任务是与用户交流，帮助他们将一个【用户提供的抽象IP】（图片会以一个或多个URL的形式通过消息中的 image_url 字段提供，可选的audioURL提供的音频也会在文本中注明）融入一款经典游戏的魔改版。
                                     【重要原则】：
-                                            1. 【IP中心化】：你的所有设计和建议都必须严格围绕用户提供的IP。图片URL (imgURL) 指向的图片是核心，你要充分理解其视觉特征、风格和潜在主题，并将其作为游戏的主角或核心元素。音频（audioURL）如果提供，也应紧密结合IP的行为或关键游戏事件。
+                                            1. 【IP中心化】：你的所有设计和建议都必须严格围绕用户提供的IP。图片URL (imgURLs) 指向的一张或多张图片是核心，你要充分理解其视觉特征、风格和潜在主题，并将它们作为游戏的主角或核心元素，或根据图片内容决定如何使用（例如，序列帧动画、不同角度的素材等）。音频（audioURL）如果提供，也应紧密结合IP的行为或关键游戏事件。
                                             2. 【禁止原创IP元素】：绝不允许你为用户提供的IP添加任何非衍生的新视觉特征，或创作全新的、与用户IP无关的角色/核心元素。你的职责是利用【用户的IP】，而不是创造新的。
                                             3. 【忠于经典，IP适配，简约至上】：你的主要目标是制作一款能让人一眼认出其原型的经典游戏的"IP定制版"。
                                             4. 【核心玩法不变】：必须最大限度地保留其【核心玩法循环】和基本规则。
-                                            5. 【IP化视觉】：UI界面、色彩搭配、整体视觉风格应参考用户IP图片的风格（如像素风、卡通风等）。
+                                            5. 【IP化视觉】：UI界面、色彩搭配、整体视觉风格应参考用户IP图片（组）的风格（如像素风、卡通风等）。
                                             6. 【"轻"创新】：对核心玩法的轻微修改或与IP主题相关的趣味机制，绝不能让游戏变得复杂或不可识别。
                                             7. 【简洁实现】：机制简洁，易于理解和直接上手。
+                                            8. 【游戏类型】（如果用户没有提出的话）：游戏类型应参考用户IP的特征，例如：
+                                                - 如果IP是动物，可以考虑跑酷、跳跃、解谜等类型。
+                                                - 如果IP是食物，可以考虑消除、合成、经营等类型。
+                                                - 如果IP是交通工具，可以考虑赛车、飞行、射击等类型。
+                                                - 如果IP是自然元素，可以考虑模拟、经营、解谜等类型。
+                                            9. 【回复的语言】：用户使用哪国语言，你就用哪国语言回复。
 
-                                    用户提供的图片会以URL形式通过消息中的 image_url 字段提供。你应直接理解图片内容获取灵感。如图片过于抽象，或URL无法访问，应主动询问用户的IP关键特征、想表达的感觉或主题，或提示用户图片可能有问题。
+                                    用户提供的图片会以一个或多个URL形式通过消息中的 image_url 字段提供。你应直接理解图片内容获取灵感。如图片过于抽象，或URL无法访问，应主动询问用户的IP关键特征、想表达的感觉或主题，或提示用户图片可能有问题。
 
 【交互流程】：
-1. 接收imgURL（必须）和audioURL（可选）。
+1. 接收imgURLs（必须，至少一个）和audioURL（可选）。
 2. 引导用户聊想法。
 3. 第一次方案应非常简洁，例如：
    "好的，我们可以尝试制作一款IP定制版的【经典游戏名称】。您的IP将作为【主角/核心元素】，主要玩法保持原汁原味，视觉风格贴合您的IP。我们可以先基于此生成一个版本。"
@@ -217,7 +223,7 @@ module.exports = async (req, res) => {
                 const messagesForAPI = [{ "role": "system", "content": systemPrompt }];
                 
                 if (conversation && conversation.length > 0) {
-                    // Pass along existing conversation, imgURL/audioURL will be added to the newest user message if applicable
+                    // Pass along existing conversation, imgURLs/audioURL will be added to the newest user message if applicable
                     conversation.forEach((msg, index) => {
                         if (msg.role === 'user' && index === conversation.length - 1) { // Only modify the last user message
                             const userMessageContent = [];
@@ -237,9 +243,13 @@ module.exports = async (req, res) => {
 
                             userMessageContent.push({ type: "text", text: originalUserText });
 
-                            if (imgURL) {
-                                 console.log("[CHAT_API_LOG] Adding imgURL to last user message content array: ", imgURL);
-                                 userMessageContent.push({ type: "image_url", image_url: { url: imgURL } });
+                            if (imgURLs && imgURLs.length > 0) {
+                                 console.log("[CHAT_API_LOG] Adding imgURLs to last user message content array: ", imgURLs);
+                                 imgURLs.forEach(url => {
+                                    if (url) {
+                                        userMessageContent.push({ type: "image_url", image_url: { url: url } });
+                                    }
+                                 });
                             }
                             if (audioURL) {
                                 const textPartToUpdate = userMessageContent.find(p => p.type ==='text');
@@ -257,9 +267,13 @@ module.exports = async (req, res) => {
                     
                     initialUserContent.push({ type: "text", text: initialText });
 
-                    if (imgURL) {
-                        console.log("[CHAT_API_LOG] Adding imgURL to initial user message content array: ", imgURL);
-                        initialUserContent.push({ type: "image_url", image_url: { url: imgURL } });
+                    if (imgURLs && imgURLs.length > 0) {
+                        console.log("[CHAT_API_LOG] Adding imgURLs to initial user message content array: ", imgURLs);
+                        imgURLs.forEach(url => {
+                            if (url) {
+                                initialUserContent.push({ type: "image_url", image_url: { url: url } });
+                            }
+                        });
                     }
                     if (audioURL) {
                          const textPartToUpdate = initialUserContent.find(p => p.type ==='text');

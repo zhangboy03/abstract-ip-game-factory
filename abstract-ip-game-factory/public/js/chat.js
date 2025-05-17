@@ -64,7 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error('Error calling /api/generate:', error);
-            appendMessage(`System: Error generating game. ${error.message}. Please check console.`, "system", true);
+            appendMessage(`System: Error generating game for memeAIgame. ${error.message}. Please check console.`, "system", true);
         }
     }
 
@@ -212,7 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function startChat() {
         if (!uploadedImageURL) {
-            appendMessage('System: No character image uploaded. Please go back to the first page to upload an image.', "system", true);
+            appendMessage('System: No character image uploaded. Please go back to the first page to upload an image for memeAIgame.', "system", true);
             chatInput.disabled = true;
             chatForm.querySelector('button[type="submit"]').disabled = true;
             return;
