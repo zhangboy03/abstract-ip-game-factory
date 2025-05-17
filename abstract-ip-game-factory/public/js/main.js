@@ -83,7 +83,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (selectedImageFiles.length > 0) {
             imagePreviewContainer.classList.remove('hidden');
             imagePreviewContainer.classList.add('flex');
-            uploadedImageName.textContent = `${selectedImageFiles.length} image(s) selected`;
+            if (selectedImageFiles.length === 1) {
+                uploadedImageName.textContent = selectedImageFiles[0].name;
+            } else {
+                uploadedImageName.textContent = `${selectedImageFiles.length} image(s) selected`;
+            }
             uploadedImageName.classList.remove('hidden');
 
             if (!sendButton) {
